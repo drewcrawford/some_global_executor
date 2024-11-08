@@ -1,10 +1,36 @@
 use std::sync::Arc;
-use crate::threadpool::Threadpool;
+use crossbeam_channel::Receiver;
+use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage, Threadpool};
 
 mod threadpool;
 
 struct Builder {
 
+}
+struct Thread {
+
+}
+impl ThreadBuilder for Builder {
+    type ThreadFn = Thread;
+    fn build(&mut self) -> Self::ThreadFn {
+        Thread {
+
+        }
+    }
+}
+impl ThreadFn for Thread {
+    fn run(self, receiver: Receiver<ThreadMessage>) {
+        loop {
+            match receiver.recv() {
+                Ok(ThreadMessage::Shutdown) => {
+                    break;
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 pub struct Executor {
@@ -13,25 +39,31 @@ pub struct Executor {
 
 
 impl Executor {
-    fn make_thread_fn() -> impl Fn() -> () + Send {
-        let thread_fn = || {
-            todo!();
-        };
-        thread_fn
-    }
     pub fn new(name: String, size: usize) -> Self {
-        todo!()
+        let builder = Builder {};
+        let threadpool = Threadpool::new(name, size, builder);
+        Self {
+            threadpool
+        }
     }
 
     pub fn new_default() -> Self {
-        todo!()
+        let builder = Builder {};
+        let threadpool = Threadpool::new_default("default".to_string(), builder);
+        Self {
+            threadpool
+        }
     }
 
+    pub fn join(self) {
+        self.threadpool.join();
+    }
 
 }
 
 #[cfg(test)] mod tests {
     #[test] fn new() {
-        let _ = super::Executor::new("test".to_string(), 4);
+        let e = super::Executor::new("test".to_string(), 4);
+        e.join();
     }
 }

@@ -2,19 +2,19 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender};
 
-trait ThreadBuilder {
+pub trait ThreadBuilder {
     type ThreadFn: ThreadFn;
     fn build(&mut self) -> Self::ThreadFn;
 }
 
-trait ThreadFn: Send + 'static {
-    fn run(self);
+pub trait ThreadFn: Send + 'static {
+    fn run(self, receiver: Receiver<ThreadMessage>);
 }
 
 impl<T> ThreadFn for T
-where T: Fn() -> () + Send + 'static {
-    fn run(self) {
-        self();
+where T: Fn(Receiver<ThreadMessage>) -> () + Send + 'static {
+    fn run(self, receiver: Receiver<ThreadMessage>) {
+        self(receiver);
     }
 }
 
@@ -36,7 +36,7 @@ pub struct Threadpool<B> {
     thread_builder: B,
 }
 
-enum ThreadMessage {
+pub enum ThreadMessage {
     Shutdown,
 }
 
@@ -68,7 +68,7 @@ impl<B> Threadpool<B> {
             .spawn(move || {
                 let c = logwise::context::Context::new_task(None, "some_global_executor threadpool");
                 c.set_current();
-                thread_fn.run();
+                thread_fn.run(receiver);
             })
             .unwrap()
     }
@@ -118,7 +118,7 @@ impl<B> Threadpool<B> {
     #[test] fn resize() {
         logwise::context::Context::reset("resize");
         let builder = || {
-            || {
+            |receiver| {
                 println!("hi");
             }
         };
