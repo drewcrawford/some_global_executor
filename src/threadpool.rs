@@ -34,6 +34,13 @@ impl Threadpool {
         Threadpool { vec, sender }
     }
 
+    pub fn submit<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.sender.send(ThreadMessage::Run(Box::new(f))).unwrap();
+    }
+
     pub fn join(self) {
         for handle in &self.vec {
             self.sender.send(ThreadMessage::End).unwrap();
@@ -51,6 +58,12 @@ impl Threadpool {
 
     #[test] fn new() {
         let t = Threadpool::new("test", 4);
+        t.submit(|| {
+            println!("Hello from thread 1");
+        });
+        t.submit(|| {
+            println!("Hello from thread 2");
+        });
         t.join();
     }
 }
