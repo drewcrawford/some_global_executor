@@ -38,7 +38,12 @@ impl ThreadFn for Thread {
                 recv(self.receiver) -> task => {
                     match task {
                         Ok(mut task) => {
+                            let mut _interval = None;
+                            if task.task.priority() < some_executor::Priority::UserInteractive {
+                                _interval = Some(logwise::perfwarn_begin!("Threadpool::run does not sort tasks"));
+                            }
                             task.run(self.queue_task.clone());
+                            _interval = None;
                         }
                         Err(_) => {
                             break;
@@ -91,11 +96,16 @@ impl SpawnedTask {
     fn run(mut self, task_sender: Sender<SpawnedTask>) {
         let mut context = std::task::Context::from_waker(&self.waker);
         self.wake_internal.reset();
-        DynSpawnedTask::poll(self.task.as_mut(), &mut context,None);
-        let move_wake_inernal = self.wake_internal.clone();
-        move_wake_inernal.check_wake(|| {
-            task_sender.send(self).unwrap()
-        });
+        let r = DynSpawnedTask::poll(self.task.as_mut(), &mut context,None);
+        match r {
+            std::task::Poll::Ready(_) => {},
+            std::task::Poll::Pending => {
+                let move_wake_inernal = self.wake_internal.clone();
+                move_wake_inernal.check_wake(|| {
+                    task_sender.send(self).unwrap()
+                });
+            }
+        }
     }
 }
 
