@@ -14,6 +14,12 @@ enum ThreadMessage {
 }
 
 impl Threadpool {
+    /**
+    Creates a threadpool sized to the number of CPUs.
+*/
+    pub fn new_default(name: String) -> Threadpool {
+        Self::new(name, num_cpus::get())
+    }
     pub fn new(name: String, size: usize) -> Threadpool {
         let mut vec = Vec::with_capacity(size);
         let (sender,receiver) = crossbeam_channel::unbounded();
@@ -51,7 +57,7 @@ impl Threadpool {
     }
 
     pub fn join(self) {
-        for handle in &self.vec {
+        for _ in &self.vec {
             self.sender.send(ThreadMessage::End).unwrap();
         }
         for handle in self.vec {
@@ -119,5 +125,10 @@ impl Threadpool {
         });
         t.resize(1);
         t.join();
+    }
+
+    #[test] fn test_num_cpus() {
+        println!("num_cpus: {}", num_cpus::get());
+        println!("num_cpus_physical: {}", num_cpus::get_physical());
     }
 }
