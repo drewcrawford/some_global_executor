@@ -1,81 +1,100 @@
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender};
 
-pub struct Threadpool {
+trait ThreadBuilder {
+    type ThreadFn: ThreadFn;
+    fn build(&mut self) -> Self::ThreadFn;
+}
+
+trait ThreadFn: Send + 'static {
+    fn run(self);
+}
+
+impl<T> ThreadFn for T
+where T: Fn() -> () + Send + 'static {
+    fn run(self) {
+        self();
+    }
+}
+
+impl<B,T> ThreadBuilder for B
+where B: Fn() -> T,
+T: ThreadFn {
+    type ThreadFn = T;
+
+    fn build(&mut self) -> Self::ThreadFn {
+        self()
+    }
+}
+
+pub struct Threadpool<B> {
     vec: Vec<JoinHandle<()>>,
     sender: Sender<ThreadMessage>,
     receiver: Receiver<ThreadMessage>,
     name: String,
+    thread_builder: B,
 }
 
 enum ThreadMessage {
-    Run(Box<dyn FnOnce() + Send>),
-    End,
+    Shutdown,
 }
 
-impl Threadpool {
+impl<B> Threadpool<B> {
     /**
     Creates a threadpool sized to the number of CPUs.
 */
-    pub fn new_default(name: String) -> Threadpool {
-        Self::new(name, num_cpus::get())
+    pub fn new_default(name: String, thread_builder: B) -> Self
+    where B: ThreadBuilder, {
+        Self::new(name, num_cpus::get(), thread_builder)
     }
-    pub fn new(name: String, size: usize) -> Threadpool {
+    pub fn new(name: String, size: usize, mut thread_builder: B) -> Self
+    where B: ThreadBuilder, {
         let mut vec = Vec::with_capacity(size);
         let (sender,receiver) = crossbeam_channel::unbounded();
         for t in 0..size {
             let receiver = receiver.clone();
-            let handle = Self::build_thread(&name, t, receiver);
+            let thread_fn = thread_builder.build();
+            let handle = Self::build_thread(&name, t, receiver, thread_fn);
             vec.push(handle);
         }
-        Threadpool { vec, sender, receiver,name }
+        Threadpool { vec, sender, receiver,name,thread_builder }
     }
 
-    fn build_thread(name: &str, thread_no: usize, receiver: Receiver<ThreadMessage>) -> JoinHandle<()> {
+    fn build_thread<T: ThreadFn>(name: &str, thread_no: usize, receiver: Receiver<ThreadMessage>,thread_fn: T) -> JoinHandle<()> {
         let name = format!("some_global_executor {}-{}", name, thread_no);
         std::thread::Builder::new()
             .name(name)
             .spawn(move || {
                 let c = logwise::context::Context::new_task(None, "some_global_executor threadpool");
                 c.set_current();
-                loop {
-                    match receiver.recv() {
-                        Ok(ThreadMessage::Run(f)) => f(),
-                        Ok(ThreadMessage::End) => break,
-                        Err(_) => break,
-                    }
-                }
+                thread_fn.run();
             })
             .unwrap()
     }
 
-    pub fn submit<F>(&self, f: F)
-    where
-        F: FnOnce() + Send + 'static,
-    {
-        self.sender.send(ThreadMessage::Run(Box::new(f))).unwrap();
-    }
 
     pub fn join(self) {
         for _ in &self.vec {
-            self.sender.send(ThreadMessage::End).unwrap();
+            self.sender.send(ThreadMessage::Shutdown).unwrap();
         }
         for handle in self.vec {
             handle.join().unwrap();
         }
     }
 
-    pub fn resize(&mut self, size: usize) {
+    pub fn resize(&mut self, size: usize)
+    where B: ThreadBuilder {
         let old_size = self.vec.len();
         if size > old_size {
             for t in old_size..size {
                 let receiver = self.receiver.clone();
-                let handle = Self::build_thread(&self.name, t, receiver);
+                let handle = Self::build_thread(&self.name, t, receiver,self.thread_builder.build());
                 self.vec.push(handle);
             }
         } else {
             for _ in size..old_size {
-                self.sender.send(ThreadMessage::End).unwrap();
+                self.sender.send(ThreadMessage::Shutdown).unwrap();
             }
             let mut _interval = None;
             while self.vec.len() > size {
@@ -93,38 +112,20 @@ impl Threadpool {
 }
 
 #[cfg(test)] mod tests {
-    use crate::threadpool::Threadpool;
+    use crate::threadpool::{ThreadBuilder, Threadpool};
 
-    #[test] fn new() {
-        logwise::context::Context::reset("new");
-        let t = Threadpool::new("test".to_string(), 4);
-        t.submit(|| {
-            println!("Hello from thread 1");
-        });
-        t.submit(|| {
-            println!("Hello from thread 2");
-        });
-        t.join();
-    }
 
     #[test] fn resize() {
         logwise::context::Context::reset("resize");
-        let mut t = Threadpool::new("test".to_string(), 4);
-        t.submit(|| {
-            println!("Hello from thread 1");
-        });
-        t.submit(|| {
-            println!("Hello from thread 2");
-        });
-        t.resize(2);
-        t.submit(|| {
-            println!("Hello from thread 3");
-        });
-        t.submit(|| {
-            println!("Hello from thread 4");
-        });
-        t.resize(1);
-        t.join();
+        let builder = || {
+            || {
+                println!("hi");
+            }
+        };
+
+        let mut threadpool = Threadpool::new("resize".to_string(), 4, builder);
+        threadpool.resize(2);
+        threadpool.join();
     }
 
     #[test] fn test_num_cpus() {
