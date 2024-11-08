@@ -163,6 +163,9 @@ impl some_executor::SomeExecutor for Executor {
 
 
 #[cfg(test)] mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
     use some_executor::SomeExecutor;
     use some_executor::task::Configuration;
 
@@ -180,7 +183,28 @@ impl some_executor::SomeExecutor for Executor {
         let observer = e.spawn(t);
         let r = receiver.recv().unwrap();
         assert_eq!(r,1);
+    }
 
+    #[test] fn poll_count() {
+        struct F(u32);
+        impl Future for F {
+            type Output = ();
+
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                if self.0 == 0 {
+                    Poll::Ready(())
+                } else {
+                    self.get_mut().0 -= 1;
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            }
+        }
+        let f = F(10);
+        let mut e = super::Executor::new("poll_count".to_string(), 4);
+        let task = some_executor::task::Task::without_notifications("poll_count".to_string(),f, Configuration::default());
+        let observer = e.spawn(task);
+        e.join();
 
     }
 }
