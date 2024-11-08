@@ -74,7 +74,7 @@ impl Executor {
         self.inner.threadpool.join();
     }
 
-    fn spawn(&mut self, task: Box<dyn DynSpawnedTask<Self>>) {
+    fn spawn_internal(&mut self, task: Box<dyn DynSpawnedTask<Self>>) {
         todo!()
     }
 }
@@ -88,7 +88,7 @@ impl some_executor::SomeExecutor for Executor {
         F::Output: Send
     {
         let (spawned,observer) = task.spawn(self);
-        self.spawn(Box::new(spawned));
+        self.spawn_internal(Box::new(spawned));
         observer
     }
 
@@ -98,7 +98,7 @@ impl some_executor::SomeExecutor for Executor {
         F::Output: Send
     {
         let (spawned,observer) = task.spawn(self);
-        self.spawn(Box::new(spawned));
+        self.spawn_internal(Box::new(spawned));
 
         async {
             observer
@@ -107,7 +107,7 @@ impl some_executor::SomeExecutor for Executor {
 
     fn spawn_objsafe(&mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Observer<Box<dyn Any + 'static + Send>, Box<dyn ExecutorNotified + 'static + Send>> {
         let (spawned,observer) = task.spawn_objsafe(self);
-        self.spawn(Box::new(spawned));
+        self.spawn_internal(Box::new(spawned));
         observer
     }
 
@@ -123,8 +123,20 @@ impl some_executor::SomeExecutor for Executor {
 
 
 #[cfg(test)] mod tests {
+    use some_executor::SomeExecutor;
+    use some_executor::task::Configuration;
+
     #[test] fn new() {
         let e = super::Executor::new("test".to_string(), 4);
         e.join();
+    }
+
+    #[test] fn spawn() {
+        let mut e = super::Executor::new("test".to_string(), 4);
+        let t = some_executor::task::Task::without_notifications("test spawn".to_string(),async {
+            println!("hi");
+        }, Configuration::default());
+        let observer = e.spawn(t);
+
     }
 }
