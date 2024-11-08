@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender};
 
@@ -29,7 +29,7 @@ T: ThreadFn {
 }
 
 pub struct Threadpool<B> {
-    vec: Vec<JoinHandle<()>>,
+    vec: Mutex<Vec<JoinHandle<()>>>,
     sender: Sender<ThreadMessage>,
     receiver: Receiver<ThreadMessage>,
     name: String,
@@ -58,6 +58,7 @@ impl<B> Threadpool<B> {
             let handle = Self::build_thread(&name, t, receiver, thread_fn);
             vec.push(handle);
         }
+        let vec = Mutex::new(vec);
         Threadpool { vec, sender, receiver,name,thread_builder }
     }
 
@@ -74,31 +75,33 @@ impl<B> Threadpool<B> {
     }
 
 
-    pub fn join(self) {
-        for _ in &self.vec {
+    pub fn join(&self) {
+        let mut lock = self.vec.lock().unwrap();
+        for _ in lock.iter() {
             self.sender.send(ThreadMessage::Shutdown).unwrap();
         }
-        for handle in self.vec {
+        for handle in lock.drain(..) {
             handle.join().unwrap();
         }
     }
 
     pub fn resize(&mut self, size: usize)
     where B: ThreadBuilder {
-        let old_size = self.vec.len();
+        let mut lock = self.vec.lock().unwrap();
+        let old_size = lock.len();
         if size > old_size {
             for t in old_size..size {
                 let receiver = self.receiver.clone();
                 let handle = Self::build_thread(&self.name, t, receiver,self.thread_builder.build());
-                self.vec.push(handle);
+                lock.push(handle);
             }
         } else {
             for _ in size..old_size {
                 self.sender.send(ThreadMessage::Shutdown).unwrap();
             }
             let mut _interval = None;
-            while self.vec.len() > size {
-                self.vec.retain(|handle| !handle.is_finished());
+            while lock.len() > size {
+                lock.retain(|handle| !handle.is_finished());
                 if _interval.is_none() {
                     _interval = Some(logwise::perfwarn_begin!("Threadpool::resize busyloop"));
                 }
