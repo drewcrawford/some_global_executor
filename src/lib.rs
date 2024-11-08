@@ -16,15 +16,18 @@ mod waker;
 
 struct Builder {
     receiver: crossbeam_channel::Receiver<SpawnedTask>,
+    queue_task: Sender<SpawnedTask>,
 }
 struct Thread {
     receiver: crossbeam_channel::Receiver<SpawnedTask>,
+    queue_task: Sender<SpawnedTask>,
 }
 impl ThreadBuilder for Builder {
     type ThreadFn = Thread;
     fn build(&mut self) -> Self::ThreadFn {
         Thread {
             receiver: self.receiver.clone(),
+            queue_task: self.queue_task.clone(),
         }
     }
 }
@@ -35,7 +38,7 @@ impl ThreadFn for Thread {
                 recv(self.receiver) -> task => {
                     match task {
                         Ok(mut task) => {
-                            task.run();
+                            task.run(self.queue_task.clone());
                         }
                         Err(_) => {
                             break;
@@ -85,12 +88,13 @@ impl SpawnedTask {
         }
     }
 
-    fn run(&mut self) {
+    fn run(mut self, task_sender: Sender<SpawnedTask>) {
         let mut context = std::task::Context::from_waker(&self.waker);
         self.wake_internal.reset();
         DynSpawnedTask::poll(self.task.as_mut(), &mut context,None);
-        self.wake_internal.check_wake(|| {
-            todo!()
+        let move_wake_inernal = self.wake_internal.clone();
+        move_wake_inernal.check_wake(|| {
+            task_sender.send(self).unwrap()
         });
     }
 }
@@ -101,6 +105,7 @@ impl Executor {
         let (sender,receiver) = crossbeam_channel::unbounded();
         let builder = Builder {
             receiver,
+            queue_task: sender.clone(),
         };
         let threadpool = Threadpool::new(name, size, builder);
         let inner = Arc::new(Inner {
