@@ -4,11 +4,11 @@ use std::sync::atomic::AtomicU64;
 use std::task::{RawWaker, RawWakerVTable};
 
 const NOT_WOKEN: u64 = 0;
-const WOKEN_INLINE: u64 = 1;
+const WOKEN: u64 = 1;
 
 
 struct WakeInternal {
-    //this contains either NOT_WOKEN, WOKEN_INLINE, or an Box pointer.
+    //this contains either NOT_WOKEN, WOKEN, or an Box pointer.
     inline_wake: AtomicU64
 }
 
@@ -20,21 +20,33 @@ impl WakeInternal {
     }
 
     fn wake_by_ref(&self) {
-        todo!()
+        match self.inline_wake.compare_exchange(NOT_WOKEN, WOKEN, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) {
+            Ok(_) => {},
+            Err(NOT_WOKEN) => {/* spurious? */},
+            Err(WOKEN) => {
+                //multiple wakes, probably fine
+            },
+            Err(_) => {
+                todo!()
+            }
+        }
     }
 }
 
 impl Drop for WakeInternal {
     fn drop(&mut self) {
         let inline_wake = self.inline_wake.load(std::sync::atomic::Ordering::Relaxed);
-        if inline_wake == WOKEN_INLINE {
+        if inline_wake == WOKEN {
             return;
         }
-        if inline_wake == NOT_WOKEN {
+        else if inline_wake == NOT_WOKEN {
             return;
         }
-        let b = unsafe { Box::from_raw(inline_wake as *mut ()) };
-        drop(b);
+        else {
+            let b = unsafe { Box::from_raw(inline_wake as *mut ()) };
+            drop(b);
+        }
+
     }
 }
 

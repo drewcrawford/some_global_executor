@@ -166,6 +166,7 @@ impl some_executor::SomeExecutor for Executor {
     use std::future::Future;
     use std::pin::Pin;
     use std::task::{Context, Poll};
+    use some_executor::observer::Observation;
     use some_executor::SomeExecutor;
     use some_executor::task::Configuration;
 
@@ -205,6 +206,7 @@ impl some_executor::SomeExecutor for Executor {
         let task = some_executor::task::Task::without_notifications("poll_count".to_string(),f, Configuration::default());
         let observer = e.spawn(task);
         e.join();
+        assert_eq!(observer.observe(), Observation::Ready(()));
 
     }
 }
