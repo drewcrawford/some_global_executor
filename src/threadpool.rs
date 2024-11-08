@@ -18,6 +18,12 @@ impl Threadpool {
         }
         Threadpool { vec }
     }
+
+    pub fn join(self) {
+        for handle in self.vec {
+            handle.join().unwrap();
+        }
+    }
 }
 
 #[cfg(test)] mod tests {
@@ -25,5 +31,6 @@ impl Threadpool {
 
     #[test] fn new() {
         let t = Threadpool::new("test", 4);
+        t.join();
     }
 }
