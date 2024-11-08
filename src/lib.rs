@@ -133,10 +133,14 @@ impl some_executor::SomeExecutor for Executor {
 
     #[test] fn spawn() {
         let mut e = super::Executor::new("test".to_string(), 4);
-        let t = some_executor::task::Task::without_notifications("test spawn".to_string(),async {
-            println!("hi");
+        let (sender,receiver) = std::sync::mpsc::channel();
+        let t = some_executor::task::Task::without_notifications("test spawn".to_string(),async move {
+            sender.send(1).unwrap();
         }, Configuration::default());
         let observer = e.spawn(t);
+        let r = receiver.recv().unwrap();
+        assert_eq!(r,1);
+
 
     }
 }
