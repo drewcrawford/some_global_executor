@@ -9,6 +9,7 @@ use some_executor::DynExecutor;
 use some_executor::observer::{ExecutorNotified, Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
 use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage, Threadpool};
+use crate::waker::WakeInternal;
 
 mod threadpool;
 mod waker;
@@ -69,22 +70,28 @@ pub struct Executor {
 struct SpawnedTask {
     task: Pin<Box<dyn DynSpawnedTask<Infallible>>>,
     waker: Waker,
+    wake_internal: Arc<WakeInternal>
 }
 
 
 impl SpawnedTask {
     fn new(task: Box<dyn DynSpawnedTask<Infallible>>) -> Self {
-        let waker = crate::waker::task_waker();
+        let (waker,wake_internal) = crate::waker::task_waker();
         let task = Box::into_pin(task);
         Self {
             task,
             waker,
+            wake_internal,
         }
     }
 
     fn run(&mut self) {
         let mut context = std::task::Context::from_waker(&self.waker);
+        self.wake_internal.reset();
         DynSpawnedTask::poll(self.task.as_mut(), &mut context,None);
+        self.wake_internal.check_wake(|| {
+            todo!()
+        });
     }
 }
 
