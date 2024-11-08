@@ -3,6 +3,7 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Waker;
 use crossbeam_channel::{select_biased, Receiver, Sender};
 use some_executor::DynExecutor;
 use some_executor::observer::{ExecutorNotified, Observer, ObserverNotified};
@@ -10,6 +11,7 @@ use some_executor::task::{DynSpawnedTask, Task};
 use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage, Threadpool};
 
 mod threadpool;
+mod waker;
 
 struct Builder {
     receiver: crossbeam_channel::Receiver<SpawnedTask>,
@@ -65,19 +67,24 @@ pub struct Executor {
 }
 
 struct SpawnedTask {
-    task: Box<dyn DynSpawnedTask<Executor>>,
+    task: Pin<Box<dyn DynSpawnedTask<Infallible>>>,
+    waker: Waker,
 }
 
 
 impl SpawnedTask {
-    fn new(task: Box<dyn DynSpawnedTask<Executor>>) -> Self {
+    fn new(task: Box<dyn DynSpawnedTask<Infallible>>) -> Self {
+        let waker = crate::waker::task_waker();
+        let task = Box::into_pin(task);
         Self {
-            task
+            task,
+            waker,
         }
     }
 
     fn run(&mut self) {
-        todo!();
+        let mut context = std::task::Context::from_waker(&self.waker);
+        DynSpawnedTask::poll(self.task.as_mut(), &mut context,None);
     }
 }
 
@@ -106,7 +113,7 @@ impl Executor {
         self.inner.threadpool.join();
     }
 
-    fn spawn_internal(&mut self, task: Box<dyn DynSpawnedTask<Self>>) {
+    fn spawn_internal(&mut self, task: Box<dyn DynSpawnedTask<Infallible>>) {
         let spawned_task = SpawnedTask::new(task);
         self.inner.sender.send(spawned_task).unwrap();
     }
