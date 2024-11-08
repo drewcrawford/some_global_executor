@@ -3,7 +3,7 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{select_biased, Receiver, Sender};
 use some_executor::DynExecutor;
 use some_executor::observer::{ExecutorNotified, Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
@@ -12,36 +12,51 @@ use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage, Threadpool};
 mod threadpool;
 
 struct Builder {
-
+    receiver: crossbeam_channel::Receiver<SpawnedTask>,
 }
 struct Thread {
-
+    receiver: crossbeam_channel::Receiver<SpawnedTask>,
 }
 impl ThreadBuilder for Builder {
     type ThreadFn = Thread;
     fn build(&mut self) -> Self::ThreadFn {
         Thread {
-
+            receiver: self.receiver.clone(),
         }
     }
 }
 impl ThreadFn for Thread {
     fn run(self, receiver: Receiver<ThreadMessage>) {
         loop {
-            match receiver.recv() {
-                Ok(ThreadMessage::Shutdown) => {
-                    break;
+            select_biased!(
+                recv(self.receiver) -> task => {
+                    match task {
+                        Ok(mut task) => {
+                            task.run();
+                        }
+                        Err(_) => {
+                            break;
+                        }
+                    }
+                },
+                recv(receiver) -> message => {
+                    match message {
+                        Ok(ThreadMessage::Shutdown) => {
+                            break;
+                        }
+                        Err(_) => {
+                            break;
+                        }
+                    }
                 }
-                Err(_) => {
-                    break;
-                }
-            }
+            );
         }
     }
 }
 
 struct Inner {
     threadpool: Threadpool<Builder>,
+    sender: Sender<SpawnedTask>
 }
 
 #[derive(Clone)]
@@ -54,15 +69,32 @@ struct SpawnedTask {
 }
 
 
+impl SpawnedTask {
+    fn new(task: Box<dyn DynSpawnedTask<Executor>>) -> Self {
+        Self {
+            task
+        }
+    }
+
+    fn run(&mut self) {
+        todo!();
+    }
+}
+
+
 impl Executor {
     pub fn new(name: String, size: usize) -> Self {
-        let builder = Builder {};
+        let (sender,receiver) = crossbeam_channel::unbounded();
+        let builder = Builder {
+            receiver,
+        };
         let threadpool = Threadpool::new(name, size, builder);
         let inner = Arc::new(Inner {
-            threadpool
+            threadpool,
+            sender
         });
         Self {
-            inner
+            inner,
         }
     }
 
@@ -75,7 +107,8 @@ impl Executor {
     }
 
     fn spawn_internal(&mut self, task: Box<dyn DynSpawnedTask<Self>>) {
-        todo!()
+        let spawned_task = SpawnedTask::new(task);
+        self.inner.sender.send(spawned_task).unwrap();
     }
 }
 
