@@ -231,4 +231,31 @@ impl some_executor::SomeExecutor for Executor {
         assert_eq!(observer.observe(), Observation::Ready(()));
 
     }
+
+    #[test] fn poll_outline() {
+        struct F(u32);
+        impl Future for F {
+            type Output = ();
+
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                if self.0 == 0 {
+                    Poll::Ready(())
+                } else {
+                    let waker = cx.waker().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        waker.wake();
+                    });
+                    Poll::Pending
+                }
+            }
+
+        }
+        let f = F(10);
+        let mut e = super::Executor::new("poll_count".to_string(), 4);
+        let task = some_executor::task::Task::without_notifications("poll_count".to_string(),f, Configuration::default());
+        let observer = e.spawn(task);
+        e.join();
+        assert_eq!(observer.observe(), Observation::Ready(()));
+    }
 }
