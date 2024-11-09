@@ -1,0 +1,10 @@
+[package]
+name = "some_global_executor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crossbeam-channel = "0.5.13"
+logwise = "0.1.1"
+num_cpus = "1.16.0"
+some_executor = "0.2.0"
