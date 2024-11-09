@@ -7,6 +7,17 @@ const NOT_WOKEN: u64 = u64::MAX;
 const WOKEN: u64 = u64::MAX - 1;
 const INVALID_BOX: u64 = WOKEN;
 
+struct AlertFn {
+    alert: Box<dyn FnOnce() -> () + Send + 'static>
+}
+
+impl AlertFn {
+    fn new<F>(alert: F) -> AlertFn where F: FnOnce() -> () + 'static + Send {
+        AlertFn {
+            alert: Box::new(alert)
+        }
+    }
+}
 
 pub struct WakeInternal {
     //this contains either NOT_WOKEN, WOKEN, or an Box pointer.
@@ -27,8 +38,24 @@ impl WakeInternal {
             Err(WOKEN) => {
                 //multiple wakes, probably fine
             },
-            Err(_) => {
-                todo!()
+            Err(boxed_fn) => {
+                match self.inline_wake.compare_exchange(boxed_fn, WOKEN, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) {
+                    Ok(_) => {
+                        let b = unsafe { Box::from_raw(boxed_fn as *mut AlertFn) };
+                        (b.alert)();
+                    },
+                    Err(WOKEN) => {
+                        //multiple wakes, probably fine
+                    },
+                    Err(NOT_WOKEN) => {
+                        //probably try again?
+                        self.wake_by_ref();
+                    },
+                    Err(other) => {
+                        //try again?
+                        self.wake_by_ref();
+                    }
+                }
             }
         }
     }
@@ -37,8 +64,8 @@ impl WakeInternal {
         self.inline_wake.store(NOT_WOKEN,std::sync::atomic::Ordering::Relaxed);
     }
 
-    pub fn check_wake<F>(&self,alert: F) where F: FnOnce() {
-        let boxed_alert = Box::new(alert);
+    pub fn check_wake<F>(&self,alert: F) where F: FnOnce() + 'static + Send {
+        let boxed_alert = Box::new(AlertFn::new(alert));
         let raw_alert = Box::into_raw(boxed_alert) as u64;
         assert!(raw_alert < INVALID_BOX);
         match self.inline_wake.compare_exchange(NOT_WOKEN, raw_alert as u64, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) {
@@ -48,11 +75,11 @@ impl WakeInternal {
             },
             Err(WOKEN) => {
                 //run alert inline instead
-                let b = unsafe { Box::from_raw(raw_alert as *mut F) };
-                b();
+                let b = unsafe { Box::from_raw(raw_alert as *mut AlertFn) };
+                (b.alert)();
             },
             Err(_) => {
-                let b = unsafe { Box::from_raw(raw_alert as *mut F) };
+                let b = unsafe { Box::from_raw(raw_alert as *mut AlertFn) };
                 drop(b);
             }
         }
