@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::convert::Infallible;
 use std::future::Future;
+use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::{Arc};
 use std::sync::atomic::AtomicUsize;
@@ -11,10 +12,13 @@ use some_executor::observer::{ExecutorNotified, Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
 use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage, Threadpool};
 use crate::waker::WakeInternal;
+use some_executor::SomeExecutor;
+
 
 mod threadpool;
 mod waker;
 
+#[derive(Debug)]
 struct Builder {
     receiver: crossbeam_channel::Receiver<SpawnedTask>,
     queue_task: Sender<SpawnedTask>,
@@ -69,13 +73,14 @@ impl ThreadFn for Thread {
     }
 }
 
+#[derive(Debug)]
 struct Inner {
     _threadpool: Threadpool<Builder>,
     sender: Sender<SpawnedTask>,
     running_tasks: Arc<AtomicUsize>,
 }
 
-#[derive(Clone)]
+#[derive(Debug,Clone)]
 pub struct Executor {
     inner: Arc<Inner>,
 }
@@ -159,6 +164,20 @@ impl Executor {
         self.inner.sender.send(spawned_task).unwrap();
 
     }
+
+    /**
+    Sets this executor as the global executor.
+*/
+    pub fn set_as_global_executor(&self) {
+        some_executor::global_executor::set_global_executor(self.clone_box());
+    }
+
+    /**
+    Sets this executor as the thread executor.
+*/
+    pub fn set_as_thread_executor(&self) {
+        some_executor::thread_executor::set_thread_executor(self.clone_box());
+    }
 }
 
 impl some_executor::SomeExecutor for Executor {
@@ -201,6 +220,23 @@ impl some_executor::SomeExecutor for Executor {
         None
     }
 }
+
+//boilerplates
+
+impl PartialEq for Executor {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Eq for Executor {}
+
+impl Hash for Executor {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        Arc::as_ptr(&self.inner).hash(state)
+    }
+}
+
 
 
 

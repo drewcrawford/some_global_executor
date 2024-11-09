@@ -28,6 +28,7 @@ T: ThreadFn {
     }
 }
 
+#[derive(Debug)]
 pub struct Threadpool<B> {
     vec: Mutex<Vec<JoinHandle<()>>>,
     sender: Sender<ThreadMessage>,
