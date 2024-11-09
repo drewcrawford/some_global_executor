@@ -51,7 +51,7 @@ impl WakeInternal {
                         //probably try again?
                         self.wake_by_ref();
                     },
-                    Err(other) => {
+                    Err(_) => {
                         //try again?
                         self.wake_by_ref();
                     }

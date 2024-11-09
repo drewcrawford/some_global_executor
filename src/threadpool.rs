@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex};
 use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender};
 
@@ -41,13 +41,6 @@ pub enum ThreadMessage {
 }
 
 impl<B> Threadpool<B> {
-    /**
-    Creates a threadpool sized to the number of CPUs.
-*/
-    pub fn new_default(name: String, thread_builder: B) -> Self
-    where B: ThreadBuilder, {
-        Self::new(name, num_cpus::get(), thread_builder)
-    }
     pub fn new(name: String, size: usize, mut thread_builder: B) -> Self
     where B: ThreadBuilder, {
         let mut vec = Vec::with_capacity(size);
@@ -115,13 +108,13 @@ impl<B> Threadpool<B> {
 }
 
 #[cfg(test)] mod tests {
-    use crate::threadpool::{ThreadBuilder, Threadpool};
+    use crate::threadpool::{Threadpool};
 
 
     #[test] fn resize() {
         logwise::context::Context::reset("resize");
         let builder = || {
-            |receiver| {
+            |_| {
                 println!("hi");
             }
         };

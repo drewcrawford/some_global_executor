@@ -2,7 +2,7 @@ use std::any::Any;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc};
 use std::sync::atomic::AtomicUsize;
 use std::task::Waker;
 use crossbeam_channel::{select_biased, Receiver, Sender};
@@ -41,7 +41,7 @@ impl ThreadFn for Thread {
             select_biased!(
                 recv(self.receiver) -> task => {
                     match task {
-                        Ok(mut task) => {
+                        Ok(task) => {
                             let mut _interval = None;
                             if task.task.priority() < some_executor::Priority::UserInteractive {
                                 _interval = Some(logwise::perfwarn_begin!("Threadpool::run does not sort tasks"));
@@ -70,7 +70,7 @@ impl ThreadFn for Thread {
 }
 
 struct Inner {
-    threadpool: Threadpool<Builder>,
+    _threadpool: Threadpool<Builder>,
     sender: Sender<SpawnedTask>,
     running_tasks: Arc<AtomicUsize>,
 }
@@ -129,7 +129,7 @@ impl Executor {
         let threadpool = Threadpool::new(name, size, builder);
         let inner = Arc::new(Inner {
             running_tasks,
-            threadpool,
+            _threadpool: threadpool,
             sender
         });
         Self {
@@ -223,7 +223,7 @@ impl some_executor::SomeExecutor for Executor {
         let t = some_executor::task::Task::without_notifications("test spawn".to_string(),async move {
             sender.send(1).unwrap();
         }, Configuration::default());
-        let observer = e.spawn(t);
+        let _observer = e.spawn(t);
         let r = receiver.recv().unwrap();
         assert_eq!(r,1);
     }
@@ -257,11 +257,12 @@ impl some_executor::SomeExecutor for Executor {
         impl Future for F {
             type Output = ();
 
-            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
                 if self.0 == 0 {
                     Poll::Ready(())
                 } else {
                     let waker = cx.waker().clone();
+                    self.0 -= 1;
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(10));
                         waker.wake();
