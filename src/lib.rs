@@ -247,13 +247,20 @@ impl Hash for Executor {
     use some_executor::observer::Observation;
     use some_executor::SomeExecutor;
     use some_executor::task::Configuration;
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    #[test] fn new() {
+
+    // #[cfg_attr(not(target_arch = "wasm32"), test)]
+    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn new() {
         let e = super::Executor::new("test".to_string(), 4);
         e.drain();
     }
 
-    #[test] fn spawn() {
+    // #[cfg_attr(not(target_arch = "wasm32"), test)]
+    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn spawn() {
         let mut e = super::Executor::new("test".to_string(), 4);
         let (sender,receiver) = std::sync::mpsc::channel();
         let t = some_executor::task::Task::without_notifications("test spawn".to_string(),async move {
@@ -264,7 +271,9 @@ impl Hash for Executor {
         assert_eq!(r,1);
     }
 
-    #[test] fn poll_count() {
+    // #[cfg_attr(not(target_arch = "wasm32"), test)]
+    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn poll_count() {
         struct F(u32);
         impl Future for F {
             type Output = ();
@@ -288,7 +297,9 @@ impl Hash for Executor {
 
     }
 
-    #[test] fn poll_outline() {
+    // #[cfg_attr(not(target_arch = "wasm32"), test)]
+    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn poll_outline() {
         struct F(u32);
         impl Future for F {
             type Output = ();
