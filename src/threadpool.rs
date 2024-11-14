@@ -1,4 +1,5 @@
 use std::sync::{Mutex};
+use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -20,11 +21,7 @@ mod sys {
     pub struct Builder {
         name: Option<String>
     }
-    #[wasm_bindgen]
-    pub fn wasm_thread_entry_point(ptr: u32) {
-        let ctx = unsafe { Box::from_raw(ptr as *mut WebWorkerContext) };
-        (ctx.func)();
-    }
+
     fn get_wasm_bindgen_shim_script_path() -> String {
         js_sys::eval(include_str!("js/script_path.js"))
             .unwrap()
@@ -76,8 +73,6 @@ mod sys {
             msg.push(&wasm_bindgen::memory());
             msg.push(&JsValue::from(ptr as u32));
             worker.post_message(&msg).unwrap();
-            std::mem::forget(worker); //TODO!!!
-            worker.g
             Ok(JoinHandle {
                 phantom_data: PhantomData,
                 finished
@@ -128,6 +123,7 @@ T: ThreadFn {
 #[derive(Debug)]
 pub struct Threadpool<B> {
     vec: Mutex<Vec<sys::JoinHandle<()>>>,
+    requested_threads: usize,
     sender: Sender<ThreadMessage>,
     receiver: Receiver<ThreadMessage>,
     name: String,
@@ -150,7 +146,7 @@ impl<B> Threadpool<B> {
             vec.push(handle);
         }
         let vec = Mutex::new(vec);
-        Threadpool { vec, sender, receiver,name,thread_builder }
+        Threadpool { vec, sender, receiver,name,thread_builder, requested_threads: size }
     }
 
     fn build_thread<T: ThreadFn>(name: &str, thread_no: usize, receiver: Receiver<ThreadMessage>,thread_fn: T) -> sys::JoinHandle<()> {
@@ -176,10 +172,10 @@ impl<B> Threadpool<B> {
         }
     }
 
-    pub fn resize(&mut self, size: usize)
+    pub async fn resize(&mut self, size: usize)
     where B: ThreadBuilder {
         let mut lock = self.vec.lock().unwrap();
-        let old_size = lock.len();
+        let old_size = self.requested_threads;
         if size > old_size {
             for t in old_size..size {
                 let receiver = self.receiver.clone();
@@ -190,21 +186,9 @@ impl<B> Threadpool<B> {
             for _ in size..old_size {
                 self.sender.send(ThreadMessage::Shutdown).unwrap();
             }
-            let mut _interval = None;
-            let mut debug = 0;
-            while lock.len() > size {
-                lock.retain(|handle| !handle.is_finished());
-                if _interval.is_none() {
-                    _interval = Some(logwise::perfwarn_begin!("Threadpool::resize busyloop"));
-                }
-                std::hint::spin_loop();
-                std::thread::yield_now();
-                debug += 1;
-                if debug > 100000 {
-                    panic!("Threadpool::resize busyloop failed to work");
-                }
-            }
-            _interval = None;
+            //gc
+            lock.retain(|handle| !handle.is_finished());
+
         }
     }
 
@@ -215,9 +199,8 @@ impl<B> Threadpool<B> {
     use crate::threadpool::{Threadpool};
 
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    fn resize() {
+    #[test_executors::async_test]
+    async fn resize() {
         logwise::context::Context::reset("resize");
         let builder = || {
             |_| {
@@ -227,7 +210,6 @@ impl<B> Threadpool<B> {
 
         let mut threadpool = Threadpool::new("resize".to_string(), 4, builder);
         threadpool.resize(2);
-        threadpool.join();
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
