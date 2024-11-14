@@ -8,12 +8,35 @@ use std::sync::atomic::AtomicUsize;
 use std::task::Waker;
 use atomic_waker::AtomicWaker;
 use crossbeam_channel::{select_biased, Receiver, Sender};
+use logwise::debuginternal_sync;
 use some_executor::DynExecutor;
 use some_executor::observer::{ExecutorNotified, Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
 use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage, Threadpool};
 use crate::waker::WakeInternal;
 use some_executor::SomeExecutor;
+
+/**
+A drain operation that waits for all tasks to finish.
+*/
+struct ExecutorDrain {
+    executor: Executor,
+}
+
+impl Future for ExecutorDrain {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        let running_tasks = self.executor.inner.drain_notify.running_tasks.load(std::sync::atomic::Ordering::Relaxed);
+        debuginternal_sync!("ExecutorDrain::poll running_tasks={running_tasks}",running_tasks=(running_tasks as u64));
+        if running_tasks == 0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.executor.inner.drain_notify.waker.register(cx.waker());
+            std::task::Poll::Pending
+        }
+    }
+}
 
 #[derive(Debug)]
 struct DrainNotify {
@@ -47,6 +70,7 @@ impl ThreadBuilder for Builder {
 }
 impl ThreadFn for Thread {
     fn run(self, receiver: Receiver<ThreadMessage>) {
+        logwise::debuginternal_sync!("Thread::run");
         loop {
             select_biased!(
                 recv(self.receiver) -> task => {
@@ -172,6 +196,12 @@ impl Executor {
         }
     }
 
+    pub fn drain_async(self) -> ExecutorDrain {
+        ExecutorDrain {
+            executor: self
+        }
+    }
+
 
     fn spawn_internal(&mut self, task: Box<dyn DynSpawnedTask<Infallible>>) {
         self.inner.drain_notify.running_tasks.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
@@ -286,9 +316,8 @@ impl Hash for Executor {
         assert_eq!(r,1);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    fn poll_count() {
+    #[test_executors::async_test]
+    async fn poll_count() {
         struct F(u32);
         impl Future for F {
             type Output = ();
@@ -307,7 +336,7 @@ impl Hash for Executor {
         let mut e = super::Executor::new("poll_count".to_string(), 4);
         let task = some_executor::task::Task::without_notifications("poll_count".to_string(),f, Configuration::default());
         let observer = e.spawn(task);
-        e.drain();
+        e.drain_async().await;
         assert_eq!(observer.observe(), Observation::Ready(()));
 
     }
