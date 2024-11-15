@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicUsize;
 use std::task::Waker;
 use atomic_waker::AtomicWaker;
 use crossbeam_channel::{select_biased, Receiver, Sender};
-use logwise::debuginternal_sync;
+use logwise::{debuginternal_sync, info_sync};
 use some_executor::DynExecutor;
 use some_executor::observer::{ExecutorNotified, Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
@@ -27,12 +27,13 @@ impl Future for ExecutorDrain {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        //need to register prior to check
+        self.executor.inner.drain_notify.waker.register(cx.waker());
         let running_tasks = self.executor.inner.drain_notify.running_tasks.load(std::sync::atomic::Ordering::Relaxed);
         debuginternal_sync!("ExecutorDrain::poll running_tasks={running_tasks}",running_tasks=(running_tasks as u64));
         if running_tasks == 0 {
             std::task::Poll::Ready(())
         } else {
-            self.executor.inner.drain_notify.waker.register(cx.waker());
             std::task::Poll::Pending
         }
     }
@@ -140,6 +141,7 @@ impl SpawnedTask {
         match r {
             std::task::Poll::Ready(_) => {
                 let old = drain_notify.running_tasks.fetch_sub(1,std::sync::atomic::Ordering::Relaxed);
+                debuginternal_sync!("Task finished, running_tasks={running_tasks}",running_tasks=(old as u64));
                 if old == 1 {
                     drain_notify.waker.wake();
                 }
@@ -157,6 +159,7 @@ impl SpawnedTask {
 
 impl Executor {
     pub fn new(name: String, size: usize) -> Self {
+        info_sync!("Executor::new name={name} size={size}",name=(&name as &str),size=(size as u64));
         let (sender,receiver) = crossbeam_channel::unbounded();
         let drain_notify = Arc::new(DrainNotify {
             running_tasks: AtomicUsize::new(0),
@@ -289,9 +292,12 @@ impl Hash for Executor {
     use std::future::Future;
     use std::pin::Pin;
     use std::task::{Context, Poll};
+    use logwise::debuginternal_sync;
     use some_executor::observer::Observation;
     use some_executor::SomeExecutor;
     use some_executor::task::Configuration;
+    use test_executors::async_test;
+
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -299,6 +305,7 @@ impl Hash for Executor {
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn new() {
+        logwise::context::Context::reset("new");
         let e = super::Executor::new("test".to_string(), 4);
         e.drain();
     }
@@ -306,6 +313,7 @@ impl Hash for Executor {
     // #[cfg_attr(not(target_arch = "wasm32"), test)]
     // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn spawn() {
+        logwise::context::Context::reset("spawn");
         let mut e = super::Executor::new("test".to_string(), 4);
         let (sender,receiver) = std::sync::mpsc::channel();
         let t = some_executor::task::Task::without_notifications("test spawn".to_string(),async move {
@@ -318,11 +326,14 @@ impl Hash for Executor {
 
     #[test_executors::async_test]
     async fn poll_count() {
+        logwise::context::Context::reset("poll_count");
+
         struct F(u32);
         impl Future for F {
             type Output = ();
 
             fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                logwise::debuginternal_sync!("poll_count is polling against {count}",count=self.0);
                 if self.0 == 0 {
                     Poll::Ready(())
                 } else {
@@ -332,18 +343,19 @@ impl Hash for Executor {
                 }
             }
         }
-        let f = F(10);
+        let f = F(3);
         let mut e = super::Executor::new("poll_count".to_string(), 4);
         let task = some_executor::task::Task::without_notifications("poll_count".to_string(),f, Configuration::default());
         let observer = e.spawn(task);
+        debuginternal_sync!("drain async");
         e.drain_async().await;
+        debuginternal_sync!("drain done");
         assert_eq!(observer.observe(), Observation::Ready(()));
-
     }
 
-    // #[cfg_attr(not(target_arch = "wasm32"), test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    fn poll_outline() {
+    #[async_test]
+    async fn poll_outline() {
+        logwise::context::Context::reset("poll_outline");
         struct F(u32);
         impl Future for F {
             type Output = ();
@@ -354,8 +366,8 @@ impl Hash for Executor {
                 } else {
                     let waker = cx.waker().clone();
                     self.0 -= 1;
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    crate::threadpool::sys::spawn(move || {
+                        crate::threadpool::sys::sleep(std::time::Duration::from_millis(10));
                         waker.wake();
                     });
                     Poll::Pending
@@ -367,7 +379,7 @@ impl Hash for Executor {
         let mut e = super::Executor::new("poll_count".to_string(), 4);
         let task = some_executor::task::Task::without_notifications("poll_count".to_string(),f, Configuration::default());
         let observer = e.spawn(task);
-        e.drain();
+        e.drain_async().await;
         assert_eq!(observer.observe(), Observation::Ready(()));
     }
 }

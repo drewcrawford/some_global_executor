@@ -3,12 +3,12 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender};
 
 #[cfg(not(target_arch = "wasm32"))]
-mod sys {
+pub(crate) mod sys {
     pub use std::thread::*;
 }
 
 #[cfg(target_arch = "wasm32")]
-mod sys {
+pub(crate) mod sys {
     pub use wasm_thread::*;
 }
 
@@ -133,7 +133,6 @@ impl<B> Threadpool<B> {
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_num_cpus() {
-        println!("num_cpus: {}", num_cpus::get());
-        println!("num_cpus_physical: {}", num_cpus::get_physical());
+        logwise::info_sync!("num_cpus: {cpus} physical: {physical}", cpus=num_cpus::get(),physical=num_cpus::get_physical());
     }
 }
