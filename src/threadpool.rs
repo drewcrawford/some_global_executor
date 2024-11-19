@@ -1,5 +1,4 @@
 use std::sync::{Mutex};
-use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -80,15 +79,7 @@ impl<B> Threadpool<B> {
     }
 
 
-    pub fn join(&self) {
-        let mut lock = self.vec.lock().unwrap();
-        for _ in lock.iter() {
-            self.sender.send(ThreadMessage::Shutdown).unwrap();
-        }
-        for handle in lock.drain(..) {
-            handle.join().unwrap();
-        }
-    }
+
 
     pub async fn resize(&mut self, size: usize)
     where B: ThreadBuilder {
@@ -127,7 +118,7 @@ impl<B> Threadpool<B> {
         };
 
         let mut threadpool = Threadpool::new("resize".to_string(), 4, builder);
-        threadpool.resize(2);
+        threadpool.resize(2).await;
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]

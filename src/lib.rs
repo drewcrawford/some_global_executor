@@ -10,7 +10,7 @@ use atomic_waker::AtomicWaker;
 use crossbeam_channel::{select_biased, Receiver, Sender};
 use logwise::{debuginternal_sync, info_sync};
 use some_executor::DynExecutor;
-use some_executor::observer::{ExecutorNotified, Observer, ObserverNotified};
+use some_executor::observer::{Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
 use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage, Threadpool};
 use crate::waker::WakeInternal;
@@ -19,7 +19,7 @@ use some_executor::SomeExecutor;
 /**
 A drain operation that waits for all tasks to finish.
 */
-struct ExecutorDrain {
+pub struct ExecutorDrain {
     executor: Executor,
 }
 
@@ -231,7 +231,7 @@ impl Executor {
 impl some_executor::SomeExecutor for Executor {
     type ExecutorNotifier = Infallible;
 
-    fn spawn<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&mut self, task: Task<F, Notifier>) -> Observer<F::Output, Self::ExecutorNotifier>
+    fn spawn<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&mut self, task: Task<F, Notifier>) -> impl Observer<Value=F::Output>
     where
         Self: Sized,
         F::Output: Send
@@ -241,7 +241,7 @@ impl some_executor::SomeExecutor for Executor {
         observer
     }
 
-    fn spawn_async<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&mut self, task: Task<F, Notifier>) -> impl Future<Output=Observer<F::Output, Self::ExecutorNotifier>> + Send + 'static
+    fn spawn_async<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&mut self, task: Task<F, Notifier>) -> impl Future<Output=impl Observer<Value=F::Output>> + Send + 'static
     where
         Self: Sized,
         F::Output: Send
@@ -254,10 +254,11 @@ impl some_executor::SomeExecutor for Executor {
         }
     }
 
-    fn spawn_objsafe(&mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Observer<Box<dyn Any + 'static + Send>, Box<dyn ExecutorNotified + 'static + Send>> {
+    fn spawn_objsafe(&mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Observer<Value=Box<dyn Any + Send>>>
+    {
         let (spawned,observer) = task.spawn_objsafe(self);
         self.spawn_internal(Box::new(spawned));
-        observer
+        Box::new(observer)
     }
 
     fn clone_box(&self) -> Box<DynExecutor> {
@@ -297,6 +298,7 @@ impl Hash for Executor {
     use some_executor::SomeExecutor;
     use some_executor::task::Configuration;
     use test_executors::async_test;
+    use some_executor::observer::Observer;
 
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -310,8 +312,8 @@ impl Hash for Executor {
         e.drain();
     }
 
-    // #[cfg_attr(not(target_arch = "wasm32"), test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn spawn() {
         logwise::context::Context::reset("spawn");
         let mut e = super::Executor::new("test".to_string(), 4);

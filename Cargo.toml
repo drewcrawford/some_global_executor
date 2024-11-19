@@ -5,9 +5,10 @@ edition = "2021"
 
 [dependencies]
 crossbeam-channel = "0.5.13"
-logwise = "0.2"
+logwise = {path = "../logwise"}
 num_cpus = "1.16.0"
-some_executor = "0.2.1"
+#some_executor = "0.2.1"
+some_executor = {path = "../some_executor"}
 atomic-waker = "1.1.2"
 
 [dev-dependencies]
