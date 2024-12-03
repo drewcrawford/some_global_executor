@@ -241,15 +241,14 @@ impl some_executor::SomeExecutor for Executor {
         observer
     }
 
-    fn spawn_async<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&mut self, task: Task<F, Notifier>) -> impl Future<Output=impl Observer<Value=F::Output>> + Send + 'static
+    fn spawn_async<'s, F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&'s mut self, task: Task<F, Notifier>) -> impl Future<Output=impl Observer<Value=F::Output>> + Send + 's
     where
         Self: Sized,
-        F::Output: Send
+        F::Output: Send + Unpin,
     {
-        let (spawned,observer) = task.spawn(self);
-        self.spawn_internal(Box::new(spawned));
-
         async {
+            let (spawned,observer) = task.spawn(self);
+            self.spawn_internal(Box::new(spawned));
             observer
         }
     }
@@ -259,6 +258,12 @@ impl some_executor::SomeExecutor for Executor {
         let (spawned,observer) = task.spawn_objsafe(self);
         self.spawn_internal(Box::new(spawned));
         Box::new(observer)
+    }
+
+    fn spawn_objsafe_async<'s>(&'s mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Future<Output=Box<dyn Observer<Value=Box<dyn Any + Send>>>> + 's> {
+        Box::new(async {
+            self.spawn_objsafe(task)
+        })
     }
 
     fn clone_box(&self) -> Box<DynExecutor> {
@@ -312,17 +317,16 @@ impl Hash for Executor {
         e.drain();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    fn spawn() {
+    #[test_executors::async_test]
+    async fn spawn() {
         logwise::context::Context::reset("spawn");
-        let mut e = super::Executor::new("test".to_string(), 4);
-        let (sender,receiver) = std::sync::mpsc::channel();
+        let mut e = super::Executor::new("test".to_string(), 1);
+        let (sender,fut) = r#continue::continuation();
         let t = some_executor::task::Task::without_notifications("test spawn".to_string(),async move {
-            sender.send(1).unwrap();
+            sender.send(1);
         }, Configuration::default());
         let _observer = e.spawn(t);
-        let r = receiver.recv().unwrap();
+        let r = fut.await;
         assert_eq!(r,1);
     }
 
