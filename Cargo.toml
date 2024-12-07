@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 crossbeam-channel = "0.5.13"
-logwise = {path = "../logwise"}
+logwise = "0.2.1"
+#logwise = {path = "../logwise"}
 num_cpus = "1.16.0"
 some_executor = "0.3.0"
 #some_executor = {path = "../some_executor"}
