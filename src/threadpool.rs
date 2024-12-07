@@ -1,6 +1,15 @@
 use std::sync::{Mutex};
-use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod sys {
+    pub use std::thread::*;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod sys {
+    pub use wasm_thread::*;
+}
 
 pub trait ThreadBuilder {
     type ThreadFn: ThreadFn;
@@ -30,7 +39,8 @@ T: ThreadFn {
 
 #[derive(Debug)]
 pub struct Threadpool<B> {
-    vec: Mutex<Vec<JoinHandle<()>>>,
+    vec: Mutex<Vec<sys::JoinHandle<()>>>,
+    requested_threads: usize,
     sender: Sender<ThreadMessage>,
     receiver: Receiver<ThreadMessage>,
     name: String,
@@ -53,12 +63,12 @@ impl<B> Threadpool<B> {
             vec.push(handle);
         }
         let vec = Mutex::new(vec);
-        Threadpool { vec, sender, receiver,name,thread_builder }
+        Threadpool { vec, sender, receiver,name,thread_builder, requested_threads: size }
     }
 
-    fn build_thread<T: ThreadFn>(name: &str, thread_no: usize, receiver: Receiver<ThreadMessage>,thread_fn: T) -> JoinHandle<()> {
+    fn build_thread<T: ThreadFn>(name: &str, thread_no: usize, receiver: Receiver<ThreadMessage>,thread_fn: T) -> sys::JoinHandle<()> {
         let name = format!("some_global_executor {}-{}", name, thread_no);
-        std::thread::Builder::new()
+        sys::Builder::new()
             .name(name)
             .spawn(move || {
                 let c = logwise::context::Context::new_task(None, "some_global_executor threadpool");
@@ -69,20 +79,12 @@ impl<B> Threadpool<B> {
     }
 
 
-    pub fn join(&self) {
-        let mut lock = self.vec.lock().unwrap();
-        for _ in lock.iter() {
-            self.sender.send(ThreadMessage::Shutdown).unwrap();
-        }
-        for handle in lock.drain(..) {
-            handle.join().unwrap();
-        }
-    }
 
-    pub fn resize(&mut self, size: usize)
+
+    pub async fn resize(&mut self, size: usize)
     where B: ThreadBuilder {
         let mut lock = self.vec.lock().unwrap();
-        let old_size = lock.len();
+        let old_size = self.requested_threads;
         if size > old_size {
             for t in old_size..size {
                 let receiver = self.receiver.clone();
@@ -93,15 +95,9 @@ impl<B> Threadpool<B> {
             for _ in size..old_size {
                 self.sender.send(ThreadMessage::Shutdown).unwrap();
             }
-            let mut _interval = None;
-            while lock.len() > size {
-                lock.retain(|handle| !handle.is_finished());
-                if _interval.is_none() {
-                    _interval = Some(logwise::perfwarn_begin!("Threadpool::resize busyloop"));
-                }
-                std::hint::spin_loop();
-            }
-            _interval = None;
+            //gc
+            lock.retain(|handle| !handle.is_finished());
+
         }
     }
 
@@ -112,7 +108,8 @@ impl<B> Threadpool<B> {
     use crate::threadpool::{Threadpool};
 
 
-    #[test] fn resize() {
+    #[test_executors::async_test]
+    async fn resize() {
         logwise::context::Context::reset("resize");
         let builder = || {
             |_| {
@@ -121,12 +118,12 @@ impl<B> Threadpool<B> {
         };
 
         let mut threadpool = Threadpool::new("resize".to_string(), 4, builder);
-        threadpool.resize(2);
-        threadpool.join();
+        threadpool.resize(2).await;
     }
 
-    #[test] fn test_num_cpus() {
-        println!("num_cpus: {}", num_cpus::get());
-        println!("num_cpus_physical: {}", num_cpus::get_physical());
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn test_num_cpus() {
+        logwise::info_sync!("num_cpus: {cpus} physical: {physical}", cpus=num_cpus::get(),physical=num_cpus::get_physical());
     }
 }
