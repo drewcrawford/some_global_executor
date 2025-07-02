@@ -253,14 +253,14 @@ impl some_executor::SomeExecutor for Executor {
         }
     }
 
-    fn spawn_objsafe(&mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Observer<Value=Box<dyn Any + Send>>>
+    fn spawn_objsafe(&mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Observer<Value=Box<dyn Any + Send>, Output=some_executor::observer::FinishedObservation<Box<dyn Any + Send>>> + Send>
     {
         let (spawned,observer) = task.spawn_objsafe(self);
         self.spawn_internal(Box::new(spawned));
         Box::new(observer)
     }
 
-    fn spawn_objsafe_async<'s>(&'s mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Future<Output=Box<dyn Observer<Value=Box<dyn Any + Send>>>> + 's> {
+    fn spawn_objsafe_async<'s>(&'s mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Future<Output=Box<dyn Observer<Value=Box<dyn Any + Send>, Output=some_executor::observer::FinishedObservation<Box<dyn Any + Send>>> + Send>> + 's> {
         Box::new(async {
             self.spawn_objsafe(task)
         })
@@ -322,9 +322,9 @@ impl Hash for Executor {
         logwise::context::Context::reset("spawn");
         let mut e = super::Executor::new("test".to_string(), 1);
         let (sender,fut) = r#continue::continuation();
-        let t = some_executor::task::Task::without_notifications("test spawn".to_string(),async move {
+        let t = some_executor::task::Task::without_notifications("test spawn".to_string(), Configuration::default(), async move {
             sender.send(1);
-        }, Configuration::default());
+        });
         let _observer = e.spawn(t);
         let r = fut.await;
         assert_eq!(r,1);
@@ -351,7 +351,7 @@ impl Hash for Executor {
         }
         let f = F(3);
         let mut e = super::Executor::new("poll_count".to_string(), 4);
-        let task = some_executor::task::Task::without_notifications("poll_count".to_string(),f, Configuration::default());
+        let task = some_executor::task::Task::without_notifications("poll_count".to_string(), Configuration::default(), f);
         let observer = e.spawn(task);
         debuginternal_sync!("drain async");
         e.drain_async().await;
@@ -383,7 +383,7 @@ impl Hash for Executor {
         }
         let f = F(10);
         let mut e = super::Executor::new("poll_count".to_string(), 4);
-        let task = some_executor::task::Task::without_notifications("poll_count".to_string(),f, Configuration::default());
+        let task = some_executor::task::Task::without_notifications("poll_count".to_string(), Configuration::default(), f);
         let observer = e.spawn(task);
         e.drain_async().await;
         assert_eq!(observer.observe(), Observation::Ready(()));
