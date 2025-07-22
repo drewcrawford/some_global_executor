@@ -29,3 +29,4 @@ wasm-bindgen-test = "0.3.45"
 
 [patch.crates-io]
 logwise = {path = "../logwise"}
+some_executor = {path = "../some_executor"}
