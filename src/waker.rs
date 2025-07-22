@@ -19,6 +19,7 @@ impl AlertFn {
     }
 }
 
+#[derive(Debug)]
 pub struct WakeInternal {
     //this contains either NOT_WOKEN, WOKEN, or an Box pointer.
     inline_wake: AtomicU64

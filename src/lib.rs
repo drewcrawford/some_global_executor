@@ -5,15 +5,13 @@ use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::{Arc};
 use std::sync::atomic::AtomicUsize;
-use std::task::Waker;
 use atomic_waker::AtomicWaker;
-use crossbeam_channel::{select_biased, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender};
 use logwise::{debuginternal_sync, info_sync};
 use some_executor::DynExecutor;
 use some_executor::observer::{Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
 use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage, Threadpool};
-use crate::waker::WakeInternal;
 use some_executor::SomeExecutor;
 
 /**
@@ -47,6 +45,7 @@ struct DrainNotify {
 
 mod threadpool;
 mod waker;
+mod sys;
 
 #[derive(Debug)]
 struct Builder {
@@ -55,52 +54,23 @@ struct Builder {
     drain_notify: Arc<DrainNotify>,
 }
 struct Thread {
-    receiver: crossbeam_channel::Receiver<SpawnedTask>,
-    queue_task: Sender<SpawnedTask>,
-    drain_notify: Arc<DrainNotify>,
+    imp: sys::Thread,
 }
 impl ThreadBuilder for Builder {
     type ThreadFn = Thread;
     fn build(&mut self) -> Self::ThreadFn {
         Thread {
-            receiver: self.receiver.clone(),
-            queue_task: self.queue_task.clone(),
-            drain_notify: self.drain_notify.clone(),
+            imp: sys::Thread::new(
+                self.receiver.clone(),
+                self.queue_task.clone(),
+                self.drain_notify.clone(),
+            ),
         }
     }
 }
 impl ThreadFn for Thread {
     fn run(self, receiver: Receiver<ThreadMessage>) {
-        logwise::debuginternal_sync!("Thread::run");
-        loop {
-            select_biased!(
-                recv(self.receiver) -> task => {
-                    match task {
-                        Ok(task) => {
-                            let mut _interval = None;
-                            if task.task.priority() < some_executor::Priority::UserInteractive {
-                                _interval = Some(logwise::perfwarn_begin!("Threadpool::run does not sort tasks"));
-                            }
-                            task.run(self.queue_task.clone(), &self.drain_notify);
-                            _interval = None;
-                        }
-                        Err(_) => {
-                            break;
-                        }
-                    }
-                },
-                recv(receiver) -> message => {
-                    match message {
-                        Ok(ThreadMessage::Shutdown) => {
-                            break;
-                        }
-                        Err(_) => {
-                            break;
-                        }
-                    }
-                }
-            );
-        }
+        self.imp.run(receiver);
     }
 }
 
@@ -117,43 +87,19 @@ pub struct Executor {
 }
 
 struct SpawnedTask {
-    task: Pin<Box<dyn DynSpawnedTask<Infallible>>>,
-    waker: Waker,
-    wake_internal: Arc<WakeInternal>
+    imp: sys::SpawnedTask,
 }
 
 
 impl SpawnedTask {
     fn new(task: Box<dyn DynSpawnedTask<Infallible>>) -> Self {
-        let (waker,wake_internal) = crate::waker::task_waker();
-        let task = Box::into_pin(task);
         Self {
-            task,
-            waker,
-            wake_internal,
+            imp: sys::SpawnedTask::new(task),
         }
     }
 
-    fn run(mut self, task_sender: Sender<SpawnedTask>, drain_notify: &DrainNotify) {
-        let mut context = std::task::Context::from_waker(&self.waker);
-        self.wake_internal.reset();
-        logwise::debuginternal_sync!("Polling task {task}",task=logwise::privacy::LogIt(self.task.task_id()));
-        let r = DynSpawnedTask::poll(self.task.as_mut(), &mut context,None);
-        match r {
-            std::task::Poll::Ready(_) => {
-                let old = drain_notify.running_tasks.fetch_sub(1,std::sync::atomic::Ordering::Relaxed);
-                debuginternal_sync!("Task {task} finished, running_tasks={running_tasks}",task=logwise::privacy::LogIt(self.task.task_id()),running_tasks=(old - 1));
-                if old == 1 {
-                    drain_notify.waker.wake();
-                }
-            },
-            std::task::Poll::Pending => {
-                let move_wake_inernal = self.wake_internal.clone();
-                move_wake_inernal.check_wake(move || {
-                    task_sender.send(self).unwrap()
-                });
-            }
-        }
+    fn run(self, task_sender: Sender<SpawnedTask>, drain_notify: &DrainNotify) {
+        self.imp.run(task_sender, drain_notify);
     }
 }
 
@@ -210,7 +156,7 @@ impl Executor {
     fn spawn_internal(&mut self, task: Box<dyn DynSpawnedTask<Infallible>>) {
         self.inner.drain_notify.running_tasks.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
         let spawned_task = SpawnedTask::new(task);
-        logwise::warn_sync!("Sending task {task}",task=logwise::privacy::LogIt(spawned_task.task.task_id()));
+        logwise::warn_sync!("Sending task {task}",task=logwise::privacy::LogIt(spawned_task.imp.task_id()));
         self.inner.sender.send(spawned_task).unwrap();
     }
 
