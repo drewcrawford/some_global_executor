@@ -49,9 +49,7 @@ mod sys;
 
 #[derive(Debug)]
 struct Builder {
-    receiver: crossbeam_channel::Receiver<SpawnedTask>,
-    queue_task: Sender<SpawnedTask>,
-    drain_notify: Arc<DrainNotify>,
+    imp: sys::Builder,
 }
 struct Thread {
     imp: sys::Thread,
@@ -60,11 +58,7 @@ impl ThreadBuilder for Builder {
     type ThreadFn = Thread;
     fn build(&mut self) -> Self::ThreadFn {
         Thread {
-            imp: sys::Thread::new(
-                self.receiver.clone(),
-                self.queue_task.clone(),
-                self.drain_notify.clone(),
-            ),
+            imp: self.imp.build().imp,
         }
     }
 }
@@ -97,10 +91,7 @@ impl SpawnedTask {
             imp: sys::SpawnedTask::new(task),
         }
     }
-
-    fn run(self, task_sender: Sender<SpawnedTask>, drain_notify: &DrainNotify) {
-        self.imp.run(task_sender, drain_notify);
-    }
+    
 }
 
 
@@ -113,9 +104,7 @@ impl Executor {
             waker: AtomicWaker::new(),
         });
         let builder = Builder {
-            receiver,
-            queue_task: sender.clone(),
-            drain_notify: drain_notify.clone()
+            imp: sys::Builder::new(receiver, sender.clone(), drain_notify.clone())
         };
         let threadpool = Threadpool::new(name, size, builder);
         let inner = Arc::new(Inner {
@@ -319,8 +308,8 @@ impl Hash for Executor {
                 } else {
                     let waker = cx.waker().clone();
                     self.0 -= 1;
-                    crate::threadpool::sys::spawn(move || {
-                        crate::threadpool::sys::sleep(std::time::Duration::from_millis(10));
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
                         waker.wake();
                     });
                     Poll::Pending

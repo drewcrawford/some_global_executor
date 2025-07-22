@@ -1,15 +1,4 @@
-use std::sync::{Mutex};
-use crossbeam_channel::{Receiver, Sender};
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod sys {
-    pub use std::thread::*;
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) mod sys {
-    pub use wasm_thread::*;
-}
+use crossbeam_channel::Receiver;
 
 pub trait ThreadBuilder {
     type ThreadFn: ThreadFn;
@@ -39,12 +28,7 @@ T: ThreadFn {
 
 #[derive(Debug)]
 pub struct Threadpool<B> {
-    vec: Mutex<Vec<sys::JoinHandle<()>>>,
-    requested_threads: usize,
-    sender: Sender<ThreadMessage>,
-    receiver: Receiver<ThreadMessage>,
-    name: String,
-    thread_builder: B,
+    imp: crate::sys::Threadpool<B>,
 }
 
 pub enum ThreadMessage {
@@ -52,56 +36,17 @@ pub enum ThreadMessage {
 }
 
 impl<B> Threadpool<B> {
-    pub fn new(name: String, size: usize, mut thread_builder: B) -> Self
+    pub fn new(name: String, size: usize, thread_builder: B) -> Self
     where B: ThreadBuilder, {
-        let mut vec = Vec::with_capacity(size);
-        let (sender,receiver) = crossbeam_channel::unbounded();
-        for t in 0..size {
-            let receiver = receiver.clone();
-            let thread_fn = thread_builder.build();
-            let handle = Self::build_thread(&name, t, receiver, thread_fn);
-            vec.push(handle);
+        Self {
+            imp: crate::sys::Threadpool::new(name, size, thread_builder),
         }
-        let vec = Mutex::new(vec);
-        Threadpool { vec, sender, receiver,name,thread_builder, requested_threads: size }
     }
-
-    fn build_thread<T: ThreadFn>(name: &str, thread_no: usize, receiver: Receiver<ThreadMessage>,thread_fn: T) -> sys::JoinHandle<()> {
-        let name = format!("some_global_executor {}-{}", name, thread_no);
-        sys::Builder::new()
-            .name(name)
-            .spawn(move || {
-                let c = logwise::context::Context::new_task(None, "some_global_executor threadpool");
-                c.set_current();
-                thread_fn.run(receiver);
-            })
-            .unwrap()
-    }
-
-
-
 
     pub async fn resize(&mut self, size: usize)
     where B: ThreadBuilder {
-        let mut lock = self.vec.lock().unwrap();
-        let old_size = self.requested_threads;
-        if size > old_size {
-            for t in old_size..size {
-                let receiver = self.receiver.clone();
-                let handle = Self::build_thread(&self.name, t, receiver,self.thread_builder.build());
-                lock.push(handle);
-            }
-        } else {
-            for _ in size..old_size {
-                self.sender.send(ThreadMessage::Shutdown).unwrap();
-            }
-            //gc
-            lock.retain(|handle| !handle.is_finished());
-
-        }
+        self.imp.resize(size).await;
     }
-
-
 }
 
 #[cfg(test)] mod tests {
