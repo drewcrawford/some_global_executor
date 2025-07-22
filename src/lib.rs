@@ -137,11 +137,12 @@ impl SpawnedTask {
     fn run(mut self, task_sender: Sender<SpawnedTask>, drain_notify: &DrainNotify) {
         let mut context = std::task::Context::from_waker(&self.waker);
         self.wake_internal.reset();
+        logwise::debuginternal_sync!("Polling task {task}",task=logwise::privacy::LogIt(self.task.task_id()));
         let r = DynSpawnedTask::poll(self.task.as_mut(), &mut context,None);
         match r {
             std::task::Poll::Ready(_) => {
                 let old = drain_notify.running_tasks.fetch_sub(1,std::sync::atomic::Ordering::Relaxed);
-                debuginternal_sync!("Task finished, running_tasks={running_tasks}",running_tasks=(old as u64));
+                debuginternal_sync!("Task {task} finished, running_tasks={running_tasks}",task=logwise::privacy::LogIt(self.task.task_id()),running_tasks=(old - 1));
                 if old == 1 {
                     drain_notify.waker.wake();
                 }
@@ -209,8 +210,8 @@ impl Executor {
     fn spawn_internal(&mut self, task: Box<dyn DynSpawnedTask<Infallible>>) {
         self.inner.drain_notify.running_tasks.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
         let spawned_task = SpawnedTask::new(task);
+        logwise::warn_sync!("Sending task {task}",task=logwise::privacy::LogIt(spawned_task.task.task_id()));
         self.inner.sender.send(spawned_task).unwrap();
-
     }
 
     /**
