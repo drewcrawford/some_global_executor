@@ -194,7 +194,7 @@ impl Executor {
             let drain_notify = drain_notify.clone();
             let thread_sender = thread_sender.clone();
             let pending_tasks = pending_tasks.clone();
-
+            Self::spawn_thread(t, thread_receiver, drain_notify, pending_tasks, thread_sender);
         }
 
         Executor {
