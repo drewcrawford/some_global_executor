@@ -30,6 +30,9 @@ impl Executor {
     pub fn name(&self) -> &str {
         &self.name
     }
+    pub fn resize(&mut self, threads: usize) {
+        self.imp.resize(threads);
+    }
 }
 
 /**
@@ -244,7 +247,6 @@ impl some_executor::SomeExecutor for Executor {
     #[test_executors::async_test]
     async fn poll_count() {
         logwise::context::Context::reset("poll_count");
-
         struct F(u32);
         impl Future for F {
             type Output = ();

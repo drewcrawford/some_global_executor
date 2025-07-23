@@ -1,9 +1,7 @@
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::{Arc};
-use std::sync::atomic::AtomicUsize;
 use std::task::Waker;
-use atomic_waker::AtomicWaker;
 use crossbeam_channel::{select_biased, Receiver, Sender};
 use logwise::info_sync;
 use some_executor::task::DynSpawnedTask;
@@ -116,7 +114,7 @@ impl Thread {
                             logwise::debuginternal_sync!("Received shutdown message, exiting thread");
                             break;
                         }
-                        Err(e) => {
+                        Err(_) => {
                            logwise::debuginternal_sync!("Threadpool shutting down");
                             break;
                         }
@@ -180,7 +178,7 @@ impl Threadpool {
             .unwrap()
     }
 
-    async fn resize(&mut self, size: usize) {
+    fn resize(&self, size: usize) {
         let mut lock = self.vec.lock().unwrap();
         let old_size = self.requested_threads;
         if size > old_size {
@@ -249,5 +247,9 @@ impl Executor {
         self.drain_notify().running_tasks.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
         logwise::warn_sync!("Sending task {task}",task=logwise::privacy::LogIt(spawned_task.imp.task_id()));
         self.inner.threadpool.task_sender.send(spawned_task).unwrap();
+    }
+    pub fn resize(&mut self, size: usize) {
+        logwise::debuginternal_sync!("Executor::resize size={size}",size=(size as u64));
+        self.inner.threadpool.resize(size);
     }
 }

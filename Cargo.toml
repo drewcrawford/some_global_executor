@@ -28,6 +28,9 @@ wasm-bindgen-futures = "0.4"
 [target.'cfg(target_arch="wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.45"
 
+# temporary log stuff
+futures = "0.3"
+
 [patch.crates-io]
 logwise = {path = "../logwise"}
 some_executor = {path = "../some_executor"}
