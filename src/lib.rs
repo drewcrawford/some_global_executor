@@ -212,6 +212,11 @@ impl some_executor::SomeExecutor for Executor {
     use some_executor::observer::Observer;
 
     #[cfg(target_arch = "wasm32")]
+    use wasm_thread as thread;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::thread;
+
+    #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 
@@ -268,6 +273,8 @@ impl some_executor::SomeExecutor for Executor {
     #[async_test]
     async fn poll_outline() {
         logwise::context::Context::reset("poll_outline");
+        let memory_logger = std::sync::Arc::new(logwise::InMemoryLogger::new());
+        logwise::set_global_logger(memory_logger.clone());
         struct F(u32);
         impl Future for F {
             type Output = ();
@@ -278,8 +285,8 @@ impl some_executor::SomeExecutor for Executor {
                 } else {
                     let waker = cx.waker().clone();
                     self.0 -= 1;
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    thread::spawn(move || {
+                        thread::sleep(std::time::Duration::from_millis(10));
                         waker.wake();
                     });
                     Poll::Pending

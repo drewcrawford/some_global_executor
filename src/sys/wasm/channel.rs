@@ -5,7 +5,7 @@ be extracted to a more general crate.
 It provides
 * async recv
 * sync write
-* single producer
+* multi producer
 * multi consumer
 * non-broadcast (each message is consumed by one consumer)
 * infinite buffer
@@ -29,6 +29,14 @@ struct Shared<T> {
 #[derive(Debug)]
 pub struct Sender<T> {
     shared: Arc<Shared<T>>,
+}
+
+impl<T> Clone for Sender<T> {
+    fn clone(&self) -> Self {
+        Sender {
+            shared: self.shared.clone(),
+        }
+    }
 }
 
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
@@ -56,9 +64,17 @@ impl <T> Sender<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Receiver<T> {
     shared: Weak<Shared<T>>,
+}
+
+impl<T> Clone for Receiver<T> {
+    fn clone(&self) -> Self {
+        Receiver {
+            shared: self.shared.clone(),
+        }
+    }
 }
 
 impl <T> Receiver<T> {
