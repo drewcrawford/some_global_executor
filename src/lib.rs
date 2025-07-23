@@ -11,8 +11,28 @@ use logwise::{debuginternal_sync, info_sync};
 use some_executor::DynExecutor;
 use some_executor::observer::{Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
-use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage, Threadpool};
 use some_executor::SomeExecutor;
+
+#[derive(Debug,PartialEq, Eq, Hash,Clone)]
+pub struct Executor {
+    imp: sys::Executor,
+    name: String,
+}
+
+impl Executor {
+    pub fn new(name: String, threads: usize) -> Self {
+        let name_clone = name.clone();
+        let inner = sys::Executor::new(name, threads);
+        Executor {
+            imp: inner,
+            name: name_clone,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
 
 /**
 A drain operation that waits for all tasks to finish.
@@ -26,8 +46,9 @@ impl Future for ExecutorDrain {
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
         //need to register prior to check
-        self.executor.inner.drain_notify.waker.register(cx.waker());
-        let running_tasks = self.executor.inner.drain_notify.running_tasks.load(std::sync::atomic::Ordering::Relaxed);
+        let drain_notify = self.executor.imp.drain_notify();
+        drain_notify.waker.register(cx.waker());
+        let running_tasks = drain_notify.running_tasks.load(std::sync::atomic::Ordering::Relaxed);
         debuginternal_sync!("ExecutorDrain::poll running_tasks={running_tasks}",running_tasks=(running_tasks as u64));
         if running_tasks == 0 {
             std::task::Poll::Ready(())
@@ -43,42 +64,23 @@ struct DrainNotify {
     waker: AtomicWaker
 }
 
-mod threadpool;
-mod waker;
-mod sys;
-
-#[derive(Debug)]
-struct Builder {
-    imp: sys::Builder,
-}
-struct Thread {
-    imp: sys::Thread,
-}
-impl ThreadBuilder for Builder {
-    type ThreadFn = Thread;
-    fn build(&mut self) -> Self::ThreadFn {
-        Thread {
-            imp: self.imp.build().imp,
+impl DrainNotify {
+    fn new() -> Self {
+        Self {
+            running_tasks: AtomicUsize::new(0),
+            waker: AtomicWaker::new(),
         }
     }
 }
-impl ThreadFn for Thread {
-    fn run(self, receiver: Receiver<ThreadMessage>) {
-        self.imp.run(receiver);
-    }
-}
 
-#[derive(Debug)]
-struct Inner {
-    _threadpool: Threadpool<Builder>,
-    sender: Sender<SpawnedTask>,
-    drain_notify: Arc<DrainNotify>,
-}
+mod waker;
+mod sys;
 
-#[derive(Debug,Clone)]
-pub struct Executor {
-    inner: Arc<Inner>,
-}
+
+
+
+
+
 
 struct SpawnedTask {
     imp: sys::SpawnedTask,
@@ -96,26 +98,7 @@ impl SpawnedTask {
 
 
 impl Executor {
-    pub fn new(name: String, size: usize) -> Self {
-        info_sync!("Executor::new name={name} size={size}",name=(&name as &str),size=(size as u64));
-        let (sender,receiver) = crossbeam_channel::unbounded();
-        let drain_notify = Arc::new(DrainNotify {
-            running_tasks: AtomicUsize::new(0),
-            waker: AtomicWaker::new(),
-        });
-        let builder = Builder {
-            imp: sys::Builder::new(receiver, sender.clone(), drain_notify.clone())
-        };
-        let threadpool = Threadpool::new(name, size, builder);
-        let inner = Arc::new(Inner {
-            drain_notify: drain_notify,
-            _threadpool: threadpool,
-            sender
-        });
-        Self {
-            inner,
-        }
-    }
+
 
     pub fn new_default() -> Self {
         Self::new("default".to_string(), num_cpus::get())
@@ -127,7 +110,7 @@ impl Executor {
     pub fn drain(self) {
         let _interval = logwise::perfwarn_begin!("Executor::drain busyloop");
         loop {
-            let running_tasks = self.inner.drain_notify.running_tasks.load(std::sync::atomic::Ordering::Relaxed);
+            let running_tasks = self.imp.drain_notify().running_tasks.load(std::sync::atomic::Ordering::Relaxed);
             if running_tasks == 0 {
                 break;
             }
@@ -143,10 +126,7 @@ impl Executor {
 
 
     fn spawn_internal(&mut self, task: Box<dyn DynSpawnedTask<Infallible>>) {
-        self.inner.drain_notify.running_tasks.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-        let spawned_task = SpawnedTask::new(task);
-        logwise::warn_sync!("Sending task {task}",task=logwise::privacy::LogIt(spawned_task.imp.task_id()));
-        self.inner.sender.send(spawned_task).unwrap();
+        self.imp.spawn_internal(SpawnedTask::new(task));
     }
 
     /**
@@ -213,19 +193,10 @@ impl some_executor::SomeExecutor for Executor {
 
 //boilerplates
 
-impl PartialEq for Executor {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
-    }
-}
 
-impl Eq for Executor {}
 
-impl Hash for Executor {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        Arc::as_ptr(&self.inner).hash(state)
-    }
-}
+
+
 
 
 

@@ -1,11 +1,14 @@
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::{Arc};
+use std::sync::atomic::AtomicUsize;
 use std::task::Waker;
+use atomic_waker::AtomicWaker;
 use crossbeam_channel::{select_biased, Receiver, Sender};
+use logwise::info_sync;
 use some_executor::task::DynSpawnedTask;
+use crate::DrainNotify;
 use crate::waker::WakeInternal;
-use crate::threadpool::{ThreadBuilder, ThreadFn, ThreadMessage};
 
 #[derive(Debug)]
 pub struct SpawnedTask {
@@ -57,27 +60,38 @@ impl SpawnedTask {
     }
 }
 
+enum ThreadMessage {
+    Shutdown,
+}
 #[derive(Debug)]
-pub struct Thread {
+struct Thread {
     receiver: crossbeam_channel::Receiver<crate::SpawnedTask>,
+    thread_receiver: crossbeam_channel::Receiver<ThreadMessage>,
     queue_task: Sender<crate::SpawnedTask>,
     drain_notify: Arc<crate::DrainNotify>,
 }
 
 impl Thread {
-    pub fn new(
+    fn new(
         receiver: crossbeam_channel::Receiver<crate::SpawnedTask>,
         queue_task: Sender<crate::SpawnedTask>,
         drain_notify: Arc<crate::DrainNotify>,
+        thread_receiver: crossbeam_channel::Receiver<ThreadMessage>,
     ) -> Self {
         Self {
             receiver,
             queue_task,
             drain_notify,
+            thread_receiver,
         }
     }
 
-    pub fn run(self, receiver: Receiver<ThreadMessage>) {
+
+}
+
+
+impl Thread {
+    fn run(self) {
         logwise::debuginternal_sync!("Thread::run");
         loop {
             select_biased!(
@@ -96,115 +110,144 @@ impl Thread {
                         }
                     }
                 },
-                recv(receiver) -> message => {
+                recv(self.thread_receiver) -> message => {
                     match message {
                         Ok(ThreadMessage::Shutdown) => {
+                            logwise::debuginternal_sync!("Received shutdown message, exiting thread");
                             break;
                         }
-                        Err(_) => {
+                        Err(e) => {
+                           logwise::debuginternal_sync!("Threadpool shutting down");
                             break;
                         }
                     }
                 }
             );
         }
+        logwise::warn_sync!("thread shutdown");
     }
 }
 
 #[derive(Debug)]
-pub struct Builder {
-    receiver: crossbeam_channel::Receiver<crate::SpawnedTask>,
-    queue_task: Sender<crate::SpawnedTask>,
-    drain_notify: Arc<crate::DrainNotify>,
-}
-
-impl Builder {
-    pub fn new(receiver: crossbeam_channel::Receiver<crate::SpawnedTask>, queue_task: Sender<crate::SpawnedTask>, drain_notify: Arc<crate::DrainNotify>) -> Self {
-        Self {
-            receiver,
-            queue_task,
-            drain_notify,
-        }
-    }
-}
-
-pub struct ThreadImpl {
-    pub(crate) imp: Thread,
-}
-
-impl ThreadBuilder for Builder {
-    type ThreadFn = ThreadImpl;
-    fn build(&mut self) -> Self::ThreadFn {
-        ThreadImpl {
-            imp: Thread::new(
-                self.receiver.clone(),
-                self.queue_task.clone(),
-                self.drain_notify.clone(),
-            ),
-        }
-    }
-}
-
-impl ThreadFn for ThreadImpl {
-    fn run(self, receiver: Receiver<ThreadMessage>) {
-        self.imp.run(receiver);
-    }
-}
-
-#[derive(Debug)]
-pub struct Threadpool<B> {
+pub struct Threadpool {
     vec: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>,
     requested_threads: usize,
-    sender: Sender<crate::threadpool::ThreadMessage>,
-    receiver: Receiver<crate::threadpool::ThreadMessage>,
+    thread_sender: Sender<ThreadMessage>,
+    thread_receiver: Receiver<ThreadMessage>,
+    task_receiver: crossbeam_channel::Receiver<crate::SpawnedTask>,
+    task_sender: Sender<crate::SpawnedTask>,
+    drain_notify: Arc<crate::DrainNotify>,
     name: String,
-    thread_builder: B,
 }
 
-impl<B> Threadpool<B> {
-    pub fn new(name: String, size: usize, mut thread_builder: B) -> Self
-    where B: crate::threadpool::ThreadBuilder, {
+impl Threadpool {
+    pub fn new(name: String, size: usize) -> Self {
         let mut vec = Vec::with_capacity(size);
-        let (sender,receiver) = crossbeam_channel::unbounded();
+        let (task_sender,task_receiver) = crossbeam_channel::unbounded();
+        let (thread_sender, thread_receiver) = crossbeam_channel::unbounded();
+        let drain_notify = Arc::new(crate::DrainNotify::new());
         for t in 0..size {
-            let receiver = receiver.clone();
-            let thread_fn = thread_builder.build();
-            let handle = Self::build_thread(&name, t, receiver, thread_fn);
+            let task_receiver = task_receiver.clone();
+            let task_sender = task_sender.clone();
+            let drain_notify = drain_notify.clone();
+            let thread_receiver = thread_receiver.clone();
+            let thread = Thread::new(task_receiver, task_sender, drain_notify, thread_receiver);
+            let handle = Self::build_thread(&name, t, thread);
             vec.push(handle);
         }
         let vec = std::sync::Mutex::new(vec);
-        Threadpool { vec, sender, receiver,name,thread_builder, requested_threads: size }
+        Threadpool {
+            vec,
+            requested_threads: size,
+            thread_sender,
+            thread_receiver,
+            task_receiver,
+            task_sender,
+            drain_notify,
+            name,
+        }
     }
 
-    fn build_thread<T: crate::threadpool::ThreadFn>(name: &str, thread_no: usize, receiver: Receiver<crate::threadpool::ThreadMessage>,thread_fn: T) -> std::thread::JoinHandle<()> {
+    fn build_thread(name: &str, thread_no: usize,thread: Thread) -> std::thread::JoinHandle<()> {
         let name = format!("some_global_executor {}-{}", name, thread_no);
         std::thread::Builder::new()
             .name(name)
             .spawn(move || {
                 let c = logwise::context::Context::new_task(None, "some_global_executor threadpool");
                 c.set_current();
-                thread_fn.run(receiver);
+                thread.run();
             })
             .unwrap()
     }
 
-    pub async fn resize(&mut self, size: usize)
-    where B: crate::threadpool::ThreadBuilder {
+    pub async fn resize(&mut self, size: usize) {
         let mut lock = self.vec.lock().unwrap();
         let old_size = self.requested_threads;
         if size > old_size {
             for t in old_size..size {
-                let receiver = self.receiver.clone();
-                let handle = Self::build_thread(&self.name, t, receiver,self.thread_builder.build());
+                let task_receiver = self.task_receiver.clone();
+                let task_sender = self.task_sender.clone();
+                let drain_notify = self.drain_notify.clone();
+                let thread_receiver = self.thread_receiver.clone();
+                let thread = Thread::new(task_receiver, task_sender, drain_notify, thread_receiver);
+
+                let handle = Self::build_thread(&self.name, t, thread);
                 lock.push(handle);
             }
         } else {
             for _ in size..old_size {
-                self.sender.send(crate::threadpool::ThreadMessage::Shutdown).unwrap();
+                self.thread_sender.send(ThreadMessage::Shutdown).unwrap();
             }
             //gc
             lock.retain(|handle| !handle.is_finished());
 
         }
+    }
+}
+
+
+
+#[derive(Debug)]
+struct Inner {
+    threadpool: Threadpool,
+}
+
+#[derive(Debug,Clone)]
+pub struct Executor {
+    inner: Arc<Inner>,
+}
+
+impl PartialEq for Executor {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Eq for Executor {}
+impl std::hash::Hash for Executor {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        Arc::as_ptr(&self.inner).hash(state);
+    }
+}
+
+impl Executor {
+    pub fn new(name: String, size: usize) -> Self {
+        info_sync!("Executor::new name={name} size={size}",name=(&name as &str),size=(size as u64));
+        let threadpool = Threadpool::new(name, size);
+        let inner = Arc::new(Inner {
+            threadpool,
+        });
+        Self {
+            inner,
+        }
+    }
+
+    pub fn drain_notify(&self) -> &Arc<DrainNotify> {
+        &self.inner.threadpool.drain_notify
+    }
+    pub fn spawn_internal(&self, spawned_task: crate::SpawnedTask) {
+        self.drain_notify().running_tasks.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+        logwise::warn_sync!("Sending task {task}",task=logwise::privacy::LogIt(spawned_task.imp.task_id()));
+        self.inner.threadpool.task_sender.send(spawned_task).unwrap();
     }
 }
