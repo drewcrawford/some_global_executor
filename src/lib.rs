@@ -3,11 +3,9 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
-use std::sync::{Arc};
 use std::sync::atomic::AtomicUsize;
 use atomic_waker::AtomicWaker;
-use crossbeam_channel::{Receiver, Sender};
-use logwise::{debuginternal_sync, info_sync};
+use logwise::{debuginternal_sync};
 use some_executor::DynExecutor;
 use some_executor::observer::{Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
@@ -82,6 +80,7 @@ mod sys;
 
 
 
+#[derive(Debug)]
 struct SpawnedTask {
     imp: sys::SpawnedTask,
 }

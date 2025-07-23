@@ -15,15 +15,18 @@ use std::sync::Weak;
 use std::sync::Mutex;
 use std::sync::Arc;
 
+#[derive(Debug)]
 struct SharedLocked<T> {
     buffer: Vec<T>,
     resume: Vec<r#continue::Sender<T>>,
 }
 
+#[derive(Debug)]
 struct Shared<T> {
     locked: Mutex<SharedLocked<T>>,
 }
 
+#[derive(Debug)]
 pub struct Sender<T> {
     shared: Arc<Shared<T>>,
 }
@@ -53,7 +56,7 @@ impl <T> Sender<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Receiver<T> {
     shared: Weak<Shared<T>>,
 }

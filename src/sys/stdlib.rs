@@ -51,7 +51,7 @@ impl SpawnedTask {
         }
     }
 
-    pub fn task_id(&self) -> impl std::fmt::Debug {
+    fn task_id(&self) -> impl std::fmt::Debug {
         self.task.task_id()
     }
 
@@ -129,7 +129,7 @@ impl Thread {
 }
 
 #[derive(Debug)]
-pub struct Threadpool {
+struct Threadpool {
     vec: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>,
     requested_threads: usize,
     thread_sender: Sender<ThreadMessage>,
@@ -141,7 +141,7 @@ pub struct Threadpool {
 }
 
 impl Threadpool {
-    pub fn new(name: String, size: usize) -> Self {
+    fn new(name: String, size: usize) -> Self {
         let mut vec = Vec::with_capacity(size);
         let (task_sender,task_receiver) = crossbeam_channel::unbounded();
         let (thread_sender, thread_receiver) = crossbeam_channel::unbounded();
@@ -180,7 +180,7 @@ impl Threadpool {
             .unwrap()
     }
 
-    pub async fn resize(&mut self, size: usize) {
+    async fn resize(&mut self, size: usize) {
         let mut lock = self.vec.lock().unwrap();
         let old_size = self.requested_threads;
         if size > old_size {
