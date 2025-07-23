@@ -273,8 +273,6 @@ impl some_executor::SomeExecutor for Executor {
     #[async_test]
     async fn poll_outline() {
         logwise::context::Context::reset("poll_outline");
-        let memory_logger = std::sync::Arc::new(logwise::InMemoryLogger::new());
-        logwise::set_global_logger(memory_logger.clone());
         struct F(u32);
         impl Future for F {
             type Output = ();

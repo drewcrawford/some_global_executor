@@ -4,7 +4,7 @@ use crate::sys::wasm::static_executor::StaticExecutor;
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Wake, Waker};
 use some_executor::task::DynSpawnedTask;
@@ -17,7 +17,8 @@ mod static_executor;
 #[derive(Debug)]
 struct Internal {
     drain_notify: Arc<DrainNotify>,
-    thread_sender: Sender<ThreadMessage>,
+    thread_sender: Sender<TaskMessage>,
+    pending_tasks: Arc<Mutex<HashMap<usize, crate::SpawnedTask>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,18 +64,21 @@ const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
 );
 
 struct WakeInfo {
-    task_pending_id: usize,
-    thread_sender: Sender<ThreadMessage>,
+    thread_sender: Sender<TaskMessage>,
+    pending_task_id: usize,
+    inline_wake: AtomicBool,
 }
 
 impl WakeInfo {
     fn wake(&self) {
-        self.thread_sender.send(ThreadMessage::ResumeTask(self.task_pending_id))
+        self.inline_wake.store(true, Ordering::Release);
+        //send a message to the thread to resume the task
+        self.thread_sender.send(TaskMessage::ResumeTask(self.pending_task_id))
     }
 }
 
 #[derive(Debug)]
-enum ThreadMessage {
+enum TaskMessage {
     NewTask(crate::SpawnedTask),
     ResumeTask(usize),
 }
@@ -83,11 +87,11 @@ enum ThreadMessage {
 
 struct Thread {
     static_executor: StaticExecutor,
-    thread_receiver: channel::Receiver<ThreadMessage>,
-    thread_sender: channel::Sender<ThreadMessage>,
+    thread_receiver: channel::Receiver<TaskMessage>,
+    thread_sender: channel::Sender<TaskMessage>,
     drain_notify: Arc<DrainNotify>,
     next_pending_id: usize,
-    pending_tasks: HashMap<usize, crate::SpawnedTask>,
+    pending_tasks: Arc<Mutex<HashMap<usize, crate::SpawnedTask>>>,
 }
 impl Thread {
     fn run(self) {
@@ -103,19 +107,19 @@ impl Thread {
         'all_tasks: loop {
             //wait for a task
             let message = self.thread_receiver.recv().await;
+            logwise::debuginternal_sync!("Thread::run_async received message: {message}",message=logwise::privacy::LogIt(&message));
             if let Some(mut message) = message {
                 match message {
-                    ThreadMessage::NewTask(mut task) => {
+                    TaskMessage::NewTask(mut task) => {
                         self.poll_task(task);
                     }
-                    ThreadMessage::ResumeTask(id) => {
-                        let task = self.pending_tasks.remove(&id);
+                    TaskMessage::ResumeTask(mut task) => {
+                        let task = self.pending_tasks.lock().unwrap().remove(&task);
                         if let Some(task) = task {
-                            //we have a task to resume
+                            //we have a task to poll
                             self.poll_task(task);
                         } else {
-                            //if we don't have a task, we can ignore this message
-                            continue 'all_tasks;
+                            logwise::debuginternal_sync!("Thread::run_async received ResumeTask for duplicate/nonpending task: {task}",task=logwise::privacy::LogIt(&task));
                         }
                     }
                 }
@@ -124,6 +128,8 @@ impl Thread {
         }
     }
     fn poll_task(&mut self, mut task: crate::SpawnedTask) {
+        //ensure task has an id
+
         let task_pending_id = match task.imp.pending_id {
             Some(id) => id,
             None => {
@@ -136,8 +142,9 @@ impl Thread {
         };
         //we could use spawn_local here, but it should be more efficient to use a work-stealing approach
         let wake_info = WakeInfo {
-            task_pending_id,
             thread_sender: self.thread_sender.clone(),
+            pending_task_id: task_pending_id,
+            inline_wake: AtomicBool::new(false),
         };
         let wake_info = Arc::new(wake_info);
         let move_wake_info = wake_info.clone();
@@ -155,9 +162,13 @@ impl Thread {
                 }
             }
             std::task::Poll::Pending => {
-                //ensure task has an id
-                //task is pending, we need to store it
-                self.pending_tasks.insert(task.imp.pending_id.unwrap(), task);
+                //note that we can get woken here, prior to inserting the task into the pending tasks
+                self.pending_tasks.lock().unwrap().insert(task_pending_id, task);
+                //after this, check the inline wake to see if we missed that poll
+                if wake_info.inline_wake.load(Ordering::Acquire) {
+                    //if the inline wake was set, ensure a poll fires after the pending task insert!
+                    self.thread_sender.send(TaskMessage::ResumeTask(task_pending_id));
+                }
             }
         }
     }
@@ -166,6 +177,7 @@ impl Thread {
 impl Executor {
     pub fn new(_name: String, threads: usize) -> Self {
         let drain_notify = Arc::new(DrainNotify::new());
+        let pending_tasks = Arc::new(Mutex::new(HashMap::new()));
 
         let (thread_sender, thread_receiver) = channel::channel();
 
@@ -173,6 +185,7 @@ impl Executor {
             let thread_receiver = thread_receiver.clone();
             let drain_notify = drain_notify.clone();
             let thread_sender = thread_sender.clone();
+            let pending_tasks = pending_tasks.clone();
             wasm_thread::Builder::new()
                 .name("some_global_executor_{}".to_string() + &t.to_string())
                 .spawn(move || {
@@ -181,7 +194,7 @@ impl Executor {
                     drain_notify,
                     thread_receiver,
                     next_pending_id: 0,
-                    pending_tasks: HashMap::new(),
+                    pending_tasks,
                     thread_sender,
                 };
                 t.run();
@@ -191,7 +204,8 @@ impl Executor {
         Executor {
             internal: Arc::new(Internal {
                 thread_sender,
-                drain_notify
+                drain_notify,
+                pending_tasks,
             }),
 
         }
@@ -203,7 +217,7 @@ impl Executor {
 
     pub fn spawn_internal(&self, spawned_task: crate::SpawnedTask) {
         self.drain_notify().running_tasks.fetch_add(1, Ordering::Relaxed);
-        self.internal.thread_sender.send(ThreadMessage::NewTask(spawned_task))
+        self.internal.thread_sender.send(TaskMessage::NewTask(spawned_task))
     }
 }
 
