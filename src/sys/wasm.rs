@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Wake, Waker};
 use some_executor::task::DynSpawnedTask;
 use crate::{DrainNotify};
-use channel::Sender;
+use channel::{Sender,Receiver};
 
 pub mod channel;
 mod static_executor;
@@ -18,7 +18,9 @@ mod static_executor;
 struct Internal {
     drain_notify: Arc<DrainNotify>,
     thread_sender: Sender<TaskMessage>,
+    thread_receiver: Receiver<TaskMessage>,
     pending_tasks: Arc<Mutex<HashMap<usize, crate::SpawnedTask>>>,
+    size: Mutex<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +83,7 @@ impl WakeInfo {
 enum TaskMessage {
     NewTask(crate::SpawnedTask),
     ResumeTask(usize),
+    Shutdown,
 }
 
 
@@ -121,6 +124,11 @@ impl Thread {
                         } else {
                             logwise::debuginternal_sync!("Thread::run_async received ResumeTask for duplicate/nonpending task: {task}",task=logwise::privacy::LogIt(&task));
                         }
+                    }
+                    TaskMessage::Shutdown => {
+                        logwise::debuginternal_sync!("Thread::run_async received Shutdown message, exiting thread");
+                        //we can exit the thread
+                        break 'all_tasks;
                     }
                 }
 
@@ -186,19 +194,7 @@ impl Executor {
             let drain_notify = drain_notify.clone();
             let thread_sender = thread_sender.clone();
             let pending_tasks = pending_tasks.clone();
-            wasm_thread::Builder::new()
-                .name("some_global_executor_{}".to_string() + &t.to_string())
-                .spawn(move || {
-                let t = Thread {
-                    static_executor: StaticExecutor::new(),
-                    drain_notify,
-                    thread_receiver,
-                    next_pending_id: 0,
-                    pending_tasks,
-                    thread_sender,
-                };
-                t.run();
-            }).unwrap();
+
         }
 
         Executor {
@@ -206,6 +202,8 @@ impl Executor {
                 thread_sender,
                 drain_notify,
                 pending_tasks,
+                size: Mutex::new(threads),
+                thread_receiver,
             }),
 
         }
@@ -218,6 +216,38 @@ impl Executor {
     pub fn spawn_internal(&self, spawned_task: crate::SpawnedTask) {
         self.drain_notify().running_tasks.fetch_add(1, Ordering::Relaxed);
         self.internal.thread_sender.send(TaskMessage::NewTask(spawned_task))
+    }
+
+    pub fn resize(&mut self, threads: usize) {
+        let mut old_size = self.internal.size.lock().unwrap();
+        if threads < *old_size {
+            let shutdown_threads = *old_size - threads;
+            for _ in 0..shutdown_threads {
+                self.internal.thread_sender.send(TaskMessage::Shutdown);
+            }
+        } else if threads > *old_size {
+            //we need to spawn new threads
+            for t in *old_size..threads {
+                Self::spawn_thread(t, self.internal.thread_receiver.clone(), self.internal.drain_notify.clone(), self.internal.pending_tasks.clone(), self.internal.thread_sender.clone());
+            }
+        }
+        *old_size = threads;
+
+    }
+    fn spawn_thread(t: usize, thread_receiver: channel::Receiver<TaskMessage>, drain_notify: Arc<DrainNotify>, pending_tasks: Arc<Mutex<HashMap<usize, crate::SpawnedTask>>>, thread_sender: channel::Sender<TaskMessage>) {
+        wasm_thread::Builder::new()
+            .name("some_global_executor_{}".to_string() + &t.to_string())
+            .spawn(move || {
+                let t = Thread {
+                    static_executor: StaticExecutor::new(),
+                    drain_notify,
+                    thread_receiver,
+                    next_pending_id: 0,
+                    pending_tasks,
+                    thread_sender,
+                };
+                t.run();
+            }).unwrap();
     }
 }
 
