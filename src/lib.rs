@@ -19,6 +19,7 @@ pub struct Executor {
 
 impl Executor {
     pub fn new(name: String, threads: usize) -> Self {
+        logwise::info_sync!("Creating executor with name {name} and {threads} threads", name=logwise::privacy::LogIt(&name), threads=logwise::privacy::LogIt(threads));
         let name_clone = name.clone();
         let inner = sys::Executor::new(name, threads);
         Executor {
