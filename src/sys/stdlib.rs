@@ -15,6 +15,10 @@ pub struct SpawnedTask {
     wake_internal: Arc<WakeInternal>
 }
 
+pub fn default_threadpool_size() -> usize {
+    num_cpus::get()
+}
+
 impl SpawnedTask {
     pub fn new(task: Box<dyn DynSpawnedTask<Infallible>>) -> Self {
         let (waker, wake_internal) = crate::waker::task_waker();

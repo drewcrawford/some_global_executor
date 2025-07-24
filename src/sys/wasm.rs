@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Wake, Waker};
 use some_executor::task::DynSpawnedTask;
+use wasm_bindgen::JsCast;
 use crate::{DrainNotify};
 use channel::{Sender,Receiver};
 
@@ -260,5 +261,19 @@ pub struct SpawnedTask {
 impl SpawnedTask {
     pub fn new(task: Box<dyn DynSpawnedTask<Infallible>>) -> Self {
         Self { task: Box::into_pin(task), pending_id: None }
+    }
+}
+
+pub fn default_threadpool_size() -> usize {
+    if let Some(window) = web_sys::window() {
+        window.navigator().hardware_concurrency() as usize
+    } else {
+        let global = js_sys::global();
+        if let Some(worker) = global.dyn_into::<web_sys::WorkerGlobalScope>().ok() {
+            worker.navigator().hardware_concurrency() as usize
+        }
+        else {
+            todo!("Not implemented");
+        }
     }
 }

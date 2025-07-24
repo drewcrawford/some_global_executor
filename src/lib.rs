@@ -104,7 +104,7 @@ impl Executor {
 
 
     pub fn new_default() -> Self {
-        Self::new("default".to_string(), num_cpus::get())
+        Self::new("default".to_string(), sys::default_threadpool_size())
     }
 
 
