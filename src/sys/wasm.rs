@@ -4,10 +4,10 @@ use crate::sys::wasm::static_executor::StaticExecutor;
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Wake, Waker};
-use some_executor::task::DynSpawnedTask;
+use some_executor::task::{DynSpawnedTask, TaskID};
 use wasm_bindgen::JsCast;
 use crate::{DrainNotify};
 use channel::{Sender,Receiver};
@@ -20,7 +20,7 @@ struct Internal {
     drain_notify: Arc<DrainNotify>,
     thread_sender: Sender<TaskMessage>,
     thread_receiver: Receiver<TaskMessage>,
-    pending_tasks: Arc<Mutex<HashMap<usize, crate::SpawnedTask>>>,
+    pending_tasks: Arc<Mutex<HashMap<TaskID, crate::SpawnedTask>>>,
     size: Mutex<usize>,
 }
 
@@ -68,22 +68,22 @@ const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
 
 struct WakeInfo {
     thread_sender: Sender<TaskMessage>,
-    pending_task_id: usize,
     inline_wake: AtomicBool,
+    task_id: TaskID,
 }
 
 impl WakeInfo {
     fn wake(&self) {
         self.inline_wake.store(true, Ordering::Release);
         //send a message to the thread to resume the task
-        self.thread_sender.send(TaskMessage::ResumeTask(self.pending_task_id))
+        self.thread_sender.send(TaskMessage::ResumeTask(self.task_id))
     }
 }
 
 #[derive(Debug)]
 enum TaskMessage {
     NewTask(crate::SpawnedTask),
-    ResumeTask(usize),
+    ResumeTask(some_executor::task::TaskID),
     Shutdown,
 }
 
@@ -94,8 +94,7 @@ struct Thread {
     thread_receiver: channel::Receiver<TaskMessage>,
     thread_sender: channel::Sender<TaskMessage>,
     drain_notify: Arc<DrainNotify>,
-    next_pending_id: usize,
-    pending_tasks: Arc<Mutex<HashMap<usize, crate::SpawnedTask>>>,
+    pending_tasks: Weak<Mutex<HashMap<some_executor::task::TaskID, crate::SpawnedTask>>>,
 }
 impl Thread {
     fn run(self) {
@@ -111,14 +110,15 @@ impl Thread {
         'all_tasks: loop {
             //wait for a task
             let message = self.thread_receiver.recv().await;
-            logwise::debuginternal_sync!("Thread::run_async received message: {message}",message=logwise::privacy::LogIt(&message));
+            //logwise::debuginternal_sync!("Thread::run_async received message: {message}",message=logwise::privacy::LogIt(&message));
             if let Some(mut message) = message {
                 match message {
                     TaskMessage::NewTask(mut task) => {
                         self.poll_task(task);
                     }
                     TaskMessage::ResumeTask(mut task) => {
-                        let task = self.pending_tasks.lock().unwrap().remove(&task);
+                        let pending_tasks = self.pending_tasks.upgrade().expect("Task resuming while shutting down?");
+                        let task = pending_tasks.lock().unwrap().remove(&task);
                         if let Some(task) = task {
                             //we have a task to poll
                             self.poll_task(task);
@@ -137,23 +137,15 @@ impl Thread {
         }
     }
     fn poll_task(&mut self, mut task: crate::SpawnedTask) {
+        logwise::debuginternal_sync!("Thread::poll_task: {task_id} {task_label}", task_id = logwise::privacy::LogIt(task.imp.task.task_id()), task_label = task.imp.task.label());
         //ensure task has an id
 
-        let task_pending_id = match task.imp.pending_id {
-            Some(id) => id,
-            None => {
-                //if the task doesn't have a pending id, we need to assign one
-                let next_id = self.next_pending_id;
-                task.imp.pending_id = Some(next_id);
-                self.next_pending_id += 1;
-                next_id
-            }
-        };
+
         //we could use spawn_local here, but it should be more efficient to use a work-stealing approach
         let wake_info = WakeInfo {
             thread_sender: self.thread_sender.clone(),
-            pending_task_id: task_pending_id,
             inline_wake: AtomicBool::new(false),
+            task_id: task.imp.task.task_id(),
         };
         let wake_info = Arc::new(wake_info);
         let move_wake_info = wake_info.clone();
@@ -163,6 +155,7 @@ impl Thread {
         let r = DynSpawnedTask::poll(task.imp.task.as_mut(), &mut cx, None);
         match r {
             std::task::Poll::Ready(r) => {
+                logwise::debuginternal_sync!("Task {task} finished", task=logwise::privacy::LogIt(task.imp.task.task_id()));
                 // task is done, we can notify the drain notify
                 let old = self.drain_notify.running_tasks.fetch_sub(1, std::sync::atomic::Ordering::Release);
                 if old == 1 {
@@ -171,12 +164,15 @@ impl Thread {
                 }
             }
             std::task::Poll::Pending => {
+                logwise::debuginternal_sync!("Task {task} yielded", task=logwise::privacy::LogIt(task.imp.task.task_id()));
                 //note that we can get woken here, prior to inserting the task into the pending tasks
-                self.pending_tasks.lock().unwrap().insert(task_pending_id, task);
+                let pending_tasks = self.pending_tasks.upgrade().expect("Task pending while shutting down?");
+                let move_id = task.imp.task.task_id();
+                pending_tasks.lock().unwrap().insert(move_id, task);
                 //after this, check the inline wake to see if we missed that poll
                 if wake_info.inline_wake.load(Ordering::Acquire) {
                     //if the inline wake was set, ensure a poll fires after the pending task insert!
-                    self.thread_sender.send(TaskMessage::ResumeTask(task_pending_id));
+                    self.thread_sender.send(TaskMessage::ResumeTask(move_id));
                 }
             }
         }
@@ -195,7 +191,7 @@ impl Executor {
             let drain_notify = drain_notify.clone();
             let thread_sender = thread_sender.clone();
             let pending_tasks = pending_tasks.clone();
-            Self::spawn_thread(t, thread_receiver, drain_notify, pending_tasks, thread_sender);
+            Self::spawn_thread(t, thread_receiver, drain_notify, &pending_tasks, thread_sender);
         }
 
         Executor {
@@ -229,13 +225,14 @@ impl Executor {
         } else if threads > *old_size {
             //we need to spawn new threads
             for t in *old_size..threads {
-                Self::spawn_thread(t, self.internal.thread_receiver.clone(), self.internal.drain_notify.clone(), self.internal.pending_tasks.clone(), self.internal.thread_sender.clone());
+                Self::spawn_thread(t, self.internal.thread_receiver.clone(), self.internal.drain_notify.clone(), &self.internal.pending_tasks, self.internal.thread_sender.clone());
             }
         }
         *old_size = threads;
 
     }
-    fn spawn_thread(t: usize, thread_receiver: channel::Receiver<TaskMessage>, drain_notify: Arc<DrainNotify>, pending_tasks: Arc<Mutex<HashMap<usize, crate::SpawnedTask>>>, thread_sender: channel::Sender<TaskMessage>) {
+    fn spawn_thread(t: usize, thread_receiver: channel::Receiver<TaskMessage>, drain_notify: Arc<DrainNotify>, pending_tasks: &Arc<Mutex<HashMap<some_executor::task::TaskID, crate::SpawnedTask>>>, thread_sender: channel::Sender<TaskMessage>) {
+        let pending_tasks = Arc::downgrade(pending_tasks);
         wasm_thread::Builder::new()
             .name("some_global_executor_{}".to_string() + &t.to_string())
             .spawn(move || {
@@ -243,7 +240,6 @@ impl Executor {
                     static_executor: StaticExecutor::new(),
                     drain_notify,
                     thread_receiver,
-                    next_pending_id: 0,
                     pending_tasks,
                     thread_sender,
                 };
@@ -252,15 +248,15 @@ impl Executor {
     }
 }
 
+
 #[derive(Debug)]
 pub struct SpawnedTask {
     task: Pin<Box<dyn DynSpawnedTask<Infallible>>>,
-    pending_id: Option<usize>,
 }
 
 impl SpawnedTask {
     pub fn new(task: Box<dyn DynSpawnedTask<Infallible>>) -> Self {
-        Self { task: Box::into_pin(task), pending_id: None }
+        Self { task: Box::into_pin(task) }
     }
 }
 
