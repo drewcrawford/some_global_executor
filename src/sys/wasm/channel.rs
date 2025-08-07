@@ -12,7 +12,7 @@ It provides
  */
 
 use std::sync::Weak;
-use std::sync::Mutex;
+use wasm_safe_mutex::Mutex;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -53,13 +53,23 @@ pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
 
 impl <T> Sender<T> {
     pub fn send(&self, value: T)  {
-        // Implementation for sending a value
-        let mut lock = self.shared.locked.lock().unwrap();
-        if let Some(resume) = lock.resume.pop() {
-            drop(lock);
-            resume.send(value);
-        } else {
-            lock.buffer.push(value);
+        let resume = self.shared.locked.with_mut_sync(|data| {
+            if let Some(resume) = data.resume.pop() {
+                Some((resume, value))
+            }
+            else {
+                data.buffer.push(value);
+                None
+            }
+        });
+        match resume {
+            Some((resume,value)) => {
+                // If we had a continuation, send the value to it
+                resume.send(value);
+            }
+            None => {
+                // Otherwise, just store the value in the buffer
+            }
         }
     }
 }
@@ -80,15 +90,24 @@ impl<T> Clone for Receiver<T> {
 impl <T> Receiver<T> {
     pub async fn recv(&self) -> Option<T> {
         if let Some(shared) = self.shared.upgrade() {
-            let mut lock = shared.locked.lock().unwrap();
-            if let Some(value) = lock.buffer.pop() {
-                Some(value)
-            }
-            else {
-                let (send,fut) = r#continue::continuation();
-                lock.resume.push(send);
-                drop(lock);
-                Some(fut.await)
+            let r = shared.locked.with_mut_async(|data| {
+                if let Some(value) = data.buffer.pop() {
+                    Ok(value)
+                }
+                else {
+                    // If the buffer is empty, we need to wait for a sender
+                    let (send, fut) = r#continue::continuation();
+                    data.resume.push(send);
+                    Err(fut)
+                }
+            }).await;
+            match r{
+                Ok(value) => Some(value),
+                Err(send) => {
+                    // If we had a continuation, we need to wait for it
+                    let fut = send.await;
+                    Some(fut)
+                }
             }
         } else {
             None // Shared data has been dropped

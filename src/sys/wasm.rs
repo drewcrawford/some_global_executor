@@ -137,7 +137,7 @@ impl Thread {
         }
     }
     fn poll_task(&mut self, mut task: crate::SpawnedTask) {
-        logwise::debuginternal_sync!("Thread::poll_task: {task_id} {task_label}", task_id = logwise::privacy::LogIt(task.imp.task.task_id()), task_label = task.imp.task.label());
+        // logwise::debuginternal_sync!("Thread::poll_task: {task_id} {task_label}", task_id = logwise::privacy::LogIt(task.imp.task.task_id()), task_label = task.imp.task.label());
         //ensure task has an id
 
 
@@ -164,7 +164,7 @@ impl Thread {
                 }
             }
             std::task::Poll::Pending => {
-                logwise::debuginternal_sync!("Task {task} yielded", task=logwise::privacy::LogIt(task.imp.task.task_id()));
+                // logwise::debuginternal_sync!("Task {task} yielded", task=logwise::privacy::LogIt(task.imp.task.task_id()));
                 //note that we can get woken here, prior to inserting the task into the pending tasks
                 let pending_tasks = self.pending_tasks.upgrade().expect("Task pending while shutting down?");
                 let move_id = task.imp.task.task_id();
