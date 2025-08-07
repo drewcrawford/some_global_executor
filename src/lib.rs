@@ -248,8 +248,6 @@ impl some_executor::SomeExecutor for Executor {
     #[test_executors::async_test]
     async fn poll_count() {
         logwise::context::Context::reset("poll_count");
-        let in_memory_logger = std::sync::Arc::new(logwise::InMemoryLogger::new());
-        logwise::set_global_logger(in_memory_logger.clone());
 
         struct F(u32);
         impl Future for F {
@@ -272,14 +270,6 @@ impl some_executor::SomeExecutor for Executor {
         let task = some_executor::task::Task::without_notifications("poll_count".to_string(), Configuration::default(), f);
 
         let observer = e.spawn(task);
-        debuginternal_sync!("drain async");
-        let t = in_memory_logger.periodic_drain_to_console(logwise::Duration::from_secs(1));
-        futures::join!(
-            e.drain_async(),
-            t
-        );
-
-        debuginternal_sync!("drain done");
         assert_eq!(observer.observe(), Observation::Ready(()));
     }
 

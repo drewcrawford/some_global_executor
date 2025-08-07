@@ -2,15 +2,20 @@
 A wasm-friendly static executor.
 */
 use std::cell::RefCell;
+use std::convert::Infallible;
 use std::rc::Rc;
 use js_sys::{Function,Reflect};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use some_executor::observer::{Observer, ObserverNotified};
+use some_executor::{BoxedStaticObserver, BoxedStaticObserverFuture, DynStaticExecutor, ObjSafeStaticTask, SomeStaticExecutor};
+use some_executor::static_support::OwnedSomeStaticExecutorErasingNotifier;
+use some_executor::task::Task;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct StaticExecutor {
     close_info: Rc<RefCell<CloseInfo>>,
 }
@@ -23,6 +28,7 @@ impl StaticExecutor {
     }
 }
 
+#[derive(Debug)]
 pub struct CloseInfo {
     running_tasks: usize,
     installed_close_handler: Option<js_sys::Function>,
@@ -180,5 +186,53 @@ impl StaticExecutor {
         self.close_info.borrow_mut().running_tasks += 1;
         let t = WasmFuture {future: fut, close_info: self.close_info.clone()};
         wasm_bindgen_futures::spawn_local(t);
+    }
+}
+
+impl SomeStaticExecutor for StaticExecutor {
+    type ExecutorNotifier = Infallible;
+
+    fn spawn_static<F, Notifier: ObserverNotified<F::Output>>(&mut self, task: Task<F, Notifier>) -> impl Observer<Value=F::Output>
+    where
+        Self: Sized,
+        F: Future + 'static,
+        F::Output: 'static + Unpin
+    {
+        let (spawned,observer) = task.spawn_static(self);
+        self.spawn(async {
+            spawned.into_future().await; //swallow return value
+        });
+        observer
+    }
+
+    fn spawn_static_async<F, Notifier: ObserverNotified<F::Output>>(&mut self, task: Task<F, Notifier>) -> impl Future<Output=impl Observer<Value=F::Output>>
+    where
+        Self: Sized,
+        F: Future + 'static,
+        F::Output: 'static + Unpin
+    {
+        async move {
+            self.spawn_static(task)
+        }
+    }
+
+    fn spawn_static_objsafe(&mut self, task: ObjSafeStaticTask) -> BoxedStaticObserver {
+        Box::new(self.spawn_static(task))
+    }
+
+    fn spawn_static_objsafe_async<'s>(&'s mut self, task: ObjSafeStaticTask) -> BoxedStaticObserverFuture<'s> {
+        Box::new(async {
+            let o = self.spawn_static_objsafe(task);
+            o
+        })
+    }
+
+    fn clone_box(&self) -> Box<DynStaticExecutor> {
+        let adapt = OwnedSomeStaticExecutorErasingNotifier::new(self.clone());
+        Box::new(adapt)
+    }
+
+    fn executor_notifier(&mut self) -> Option<Self::ExecutorNotifier> {
+        None
     }
 }

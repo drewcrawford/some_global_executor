@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Wake, Waker};
+use some_executor::SomeStaticExecutor;
 use some_executor::task::{DynSpawnedTask, TaskID};
 use wasm_bindgen::JsCast;
 use crate::{DrainNotify};
@@ -103,6 +104,8 @@ impl Thread {
         //to break out of the box
         //we must clone this out of self so we can move self into the future
         let executor = self.static_executor.clone();
+        let boxed_executor: Box<dyn SomeStaticExecutor<ExecutorNotifier=Infallible>> = Box::new(executor.clone());
+        some_executor::thread_executor::set_thread_static_executor_adapting_notifier(boxed_executor);
         executor.spawn(self.run_async());
         //this will normally exit the thread, but that's handled by our static executor.
     }
