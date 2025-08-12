@@ -175,7 +175,7 @@ impl Threadpool {
         std::thread::Builder::new()
             .name(name)
             .spawn(move || {
-                let c = logwise::context::Context::new_task(None, "some_global_executor threadpool");
+                let c = logwise::context::Context::new_task(None, "some_global_executor threadpool".to_string());
                 c.set_current();
                 thread.run();
             })
