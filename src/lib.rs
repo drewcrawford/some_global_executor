@@ -5,11 +5,13 @@ use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::atomic::AtomicUsize;
 use atomic_waker::AtomicWaker;
-use logwise::{debuginternal_sync};
+use logwise::{debuginternal_sync, declare_logging_domain};
 use some_executor::DynExecutor;
 use some_executor::observer::{Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
 use some_executor::SomeExecutor;
+
+declare_logging_domain!();
 
 #[derive(Debug,PartialEq, Eq, Hash,Clone)]
 pub struct Executor {
@@ -227,14 +229,14 @@ impl some_executor::SomeExecutor for Executor {
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn new() {
-        logwise::context::Context::reset("new");
+        logwise::context::Context::reset("new".to_string());
         let e = super::Executor::new("test".to_string(), 4);
         e.drain();
     }
 
     #[test_executors::async_test]
     async fn spawn() {
-        logwise::context::Context::reset("spawn");
+        logwise::context::Context::reset("spawn".to_string());
         let mut e = super::Executor::new("test".to_string(), 1);
         let (sender,fut) = r#continue::continuation();
         let t = some_executor::task::Task::without_notifications("test spawn".to_string(), Configuration::default(), async move {
@@ -247,7 +249,7 @@ impl some_executor::SomeExecutor for Executor {
 
     #[test_executors::async_test]
     async fn poll_count() {
-        logwise::context::Context::reset("poll_count");
+        logwise::context::Context::reset("poll_count".to_string());
 
         struct F(u32);
         impl Future for F {
@@ -275,7 +277,7 @@ impl some_executor::SomeExecutor for Executor {
 
     #[async_test]
     async fn poll_outline() {
-        logwise::context::Context::reset("poll_outline");
+        logwise::context::Context::reset("poll_outline".to_string());
         struct F(u32);
         impl Future for F {
             type Output = ();

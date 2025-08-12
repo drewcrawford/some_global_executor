@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-logwise = "0.2"
+logwise = "0.3"
 #logwise = {path = "../logwise"}
 some_executor = "0.5"
 #some_executor = {path = "../some_executor"}
@@ -13,7 +13,7 @@ atomic-waker = "1.1.2"
 
 
 [dev-dependencies]
-test_executors = "0.3.1"
+test_executors = "0.3"
 continue = "0.1.0"
 # temp
 futures = "0.3"
@@ -41,3 +41,4 @@ wasm-bindgen-test = "0.3.45"
 [patch.crates-io]
 logwise = {path = "../logwise"}
 some_executor = {path = "../some_executor"}
+test_executors = {path = "../test_executors"}
