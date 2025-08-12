@@ -119,14 +119,14 @@ impl Thread {
                     TaskMessage::NewTask(mut task) => {
                         self.poll_task(task);
                     }
-                    TaskMessage::ResumeTask(mut task) => {
+                    TaskMessage::ResumeTask(mut task_id) => {
                         let pending_tasks = self.pending_tasks.upgrade().expect("Task resuming while shutting down?");
-                        let task = pending_tasks.lock().unwrap().remove(&task);
+                        let task = pending_tasks.lock().unwrap().remove(&task_id);
                         if let Some(task) = task {
                             //we have a task to poll
                             self.poll_task(task);
                         } else {
-                            logwise::debuginternal_sync!("Thread::run_async received ResumeTask for duplicate/nonpending task: {task}",task=logwise::privacy::LogIt(&task));
+                            logwise::debuginternal_sync!("Thread::run_async received ResumeTask for duplicate/nonpending task: {task}",task=logwise::privacy::LogIt(&task_id));
                         }
                     }
                     TaskMessage::Shutdown => {
