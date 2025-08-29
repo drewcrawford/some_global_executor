@@ -522,7 +522,6 @@ impl AsMut<Executor> for ExecutorDrain {
     use std::future::Future;
     use std::pin::Pin;
     use std::task::{Context, Poll};
-    use logwise::debuginternal_sync;
     use some_executor::observer::Observation;
     use some_executor::SomeExecutor;
     use some_executor::task::Configuration;
