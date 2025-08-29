@@ -223,6 +223,7 @@ impl SomeStaticExecutor for StaticExecutor {
         F: Future + 'static,
         F::Output: 'static + Unpin,
     {
+        #[allow(clippy::async_yields_async)]
         async move { self.spawn_static(task) }
     }
 
@@ -234,6 +235,7 @@ impl SomeStaticExecutor for StaticExecutor {
         &'s mut self,
         task: ObjSafeStaticTask,
     ) -> BoxedStaticObserverFuture<'s> {
+        #[allow(clippy::async_yields_async)]
         Box::new(async {
             let o = self.spawn_static_objsafe(task);
             o
