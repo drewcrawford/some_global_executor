@@ -228,6 +228,7 @@ impl Executor {
 /// executor.drain_async().await;
 /// # });
 /// ```
+#[derive(Debug)]
 pub struct ExecutorDrain {
     executor: Executor,
 }
@@ -485,7 +486,31 @@ impl some_executor::SomeExecutor for Executor {
 
 //boilerplates
 
+impl From<ExecutorDrain> for Executor {
+    fn from(drain: ExecutorDrain) -> Self {
+        drain.executor
+    }
+}
 
+impl From<Executor> for ExecutorDrain {
+    fn from(executor: Executor) -> Self {
+        ExecutorDrain {
+            executor
+        }
+    }
+}
+
+impl AsRef<Executor> for ExecutorDrain {
+    fn as_ref(&self) -> &Executor {
+        &self.executor
+    }
+}
+
+impl AsMut<Executor> for ExecutorDrain {
+    fn as_mut(&mut self) -> &mut Executor {
+        &mut self.executor
+    }
+}
 
 
 

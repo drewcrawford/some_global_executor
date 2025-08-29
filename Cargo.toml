@@ -14,8 +14,6 @@ atomic-waker = "1.1.2"
 [dev-dependencies]
 test_executors = "0.3.5"
 continue = "0.1.1"
-# temp
-futures = "0.3.31"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 crossbeam-channel = "0.5.15"
