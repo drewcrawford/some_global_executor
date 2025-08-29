@@ -4,41 +4,35 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-logwise = "0.3"
+logwise = "0.3.0"
 #logwise = {path = "../logwise"}
-some_executor = "0.5"
-#some_executor = {path = "../some_executor"}
+some_executor = "0.6.1"
 atomic-waker = "1.1.2"
 
 
 
 [dev-dependencies]
-test_executors = "0.3"
-continue = "0.1.0"
+test_executors = "0.3.5"
+continue = "0.1.1"
 # temp
-futures = "0.3"
+futures = "0.3.31"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-crossbeam-channel = "0.5.13"
+crossbeam-channel = "0.5.15"
 num_cpus = "1.17.0"
 
 
 
 [target.'cfg(target_arch="wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-web-sys = {version = "0.3", features=["Worker","Blob","Url","WorkerOptions","WorkerType","WorkerGlobalScope"]}
-js-sys = "0.3"
+wasm-bindgen = "0.2.100"
+web-sys = {version = "0.3.77", features=["Worker","Blob","Url","WorkerOptions","WorkerType","WorkerGlobalScope"]}
+js-sys = "0.3.77"
 wasm_thread = "0.3.3"
 continue = "0.1.1"
-wasm-bindgen-futures = "0.4"
+wasm-bindgen-futures = "0.4.50"
 wasm_safe_mutex = { path = "../wasm_safe_mutex"}
 
 
 
 [target.'cfg(target_arch="wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3.45"
-
-[patch.crates-io]
-logwise = {path = "../logwise"}
-some_executor = {path = "../some_executor"}
-test_executors = {path = "../test_executors"}
+wasm-bindgen-test = "0.3.50"

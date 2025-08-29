@@ -1,3 +1,74 @@
+//! A global executor implementation for the `some_executor` framework.
+#![warn(missing_docs)]
+//!
+//! This crate provides a cross-platform executor that works on both standard platforms
+//! and WebAssembly (WASM) targets. It implements the `SomeExecutor` trait and provides
+//! thread pool-based task execution with configurable thread counts.
+//!
+//! # Features
+//!
+//! - **Cross-platform support**: Works on both native platforms and WASM targets
+//! - **Configurable thread pools**: Create executors with custom thread counts
+//! - **Task observation**: Monitor task execution through the observer pattern
+//! - **Async draining**: Wait for all tasks to complete before shutdown
+//! - **Global and thread-local executor support**: Set executors as global or thread-local defaults
+//!
+//! # Examples
+//!
+//! ## Basic Usage
+//!
+//! ```
+//! use some_global_executor::Executor;
+//! use some_executor::SomeExecutor;
+//! use some_executor::task::{Task, Configuration};
+//!
+//! // Create an executor with 4 threads
+//! let mut executor = Executor::new("my-executor".to_string(), 4);
+//!
+//! // Spawn a simple task
+//! let task = Task::without_notifications(
+//!     "example-task".to_string(),
+//!     Configuration::default(),
+//!     async {
+//!         println!("Task executing!");
+//!         42
+//!     }
+//! );
+//!
+//! let observer = executor.spawn(task);
+//! // Task is now running in the background
+//! 
+//! // Clean up
+//! executor.drain();
+//! ```
+//!
+//! ## Using the Default Executor
+//!
+//! ```
+//! use some_global_executor::Executor;
+//!
+//! // Create an executor with default settings
+//! let executor = Executor::new_default();
+//! assert_eq!(executor.name(), "default");
+//! 
+//! // Clean up
+//! executor.drain();
+//! ```
+//!
+//! ## Resizing Thread Pool
+//!
+//! ```
+//! use some_global_executor::Executor;
+//!
+//! let mut executor = Executor::new("resizable".to_string(), 2);
+//! 
+//! // Resize the thread pool to 8 threads
+//! executor.resize(8);
+//! 
+//! // Clean up
+//! executor.drain();
+//! ```
+
 use std::any::Any;
 use std::convert::Infallible;
 use std::future::Future;
@@ -11,8 +82,37 @@ use some_executor::observer::{Observer, ObserverNotified};
 use some_executor::task::{DynSpawnedTask, Task};
 use some_executor::SomeExecutor;
 
+/// re-exports the `SomeExecutor` crate for convenience.
+pub use some_executor;
+
 declare_logging_domain!();
 
+/// A thread pool-based executor for running asynchronous tasks.
+///
+/// The `Executor` manages a pool of worker threads that execute submitted tasks.
+/// It provides both synchronous and asynchronous draining capabilities, allowing
+/// you to wait for all tasks to complete before shutdown.
+///
+/// # Platform Support
+///
+/// This executor automatically adapts to the target platform:
+/// - On standard platforms, it uses OS threads via `crossbeam-channel`
+/// - On WASM targets, it uses web workers for parallelism
+///
+/// # Examples
+///
+/// ```
+/// use some_global_executor::Executor;
+///
+/// // Create an executor named "worker-pool" with 4 threads
+/// let executor = Executor::new("worker-pool".to_string(), 4);
+///
+/// // Get the executor's name
+/// assert_eq!(executor.name(), "worker-pool");
+///
+/// // Clean up when done
+/// executor.drain();
+/// ```
 #[derive(Debug,PartialEq, Eq, Hash,Clone)]
 pub struct Executor {
     imp: sys::Executor,
@@ -20,6 +120,29 @@ pub struct Executor {
 }
 
 impl Executor {
+    /// Creates a new executor with the specified name and thread count.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - A descriptive name for the executor, used for logging and debugging
+    /// * `threads` - The number of worker threads to create in the thread pool
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_global_executor::Executor;
+    ///
+    /// // Create an executor with 8 worker threads
+    /// let executor = Executor::new("high-performance".to_string(), 8);
+    /// 
+    /// // Clean up
+    /// executor.drain();
+    /// ```
+    ///
+    /// # Logging
+    ///
+    /// This method logs the creation of the executor using the logwise framework,
+    /// including the name and thread count for debugging purposes.
     pub fn new(name: String, threads: usize) -> Self {
         logwise::info_sync!("Creating executor with name {name} and {threads} threads", name=logwise::privacy::LogIt(&name), threads=logwise::privacy::LogIt(threads));
         let name_clone = name.clone();
@@ -30,17 +153,81 @@ impl Executor {
         }
     }
 
+    /// Returns the name of this executor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_global_executor::Executor;
+    ///
+    /// let executor = Executor::new("my-executor".to_string(), 2);
+    /// assert_eq!(executor.name(), "my-executor");
+    /// executor.drain();
+    /// ```
     pub fn name(&self) -> &str {
         &self.name
     }
+    /// Resizes the thread pool to the specified number of threads.
+    ///
+    /// This method adjusts the number of worker threads in the executor's thread pool.
+    /// The exact behavior depends on the underlying platform implementation.
+    ///
+    /// # Arguments
+    ///
+    /// * `threads` - The new number of worker threads
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_global_executor::Executor;
+    ///
+    /// let mut executor = Executor::new("dynamic".to_string(), 2);
+    /// 
+    /// // Increase thread count for heavy workload
+    /// executor.resize(8);
+    /// 
+    /// // Later, reduce thread count
+    /// executor.resize(4);
+    /// 
+    /// executor.drain();
+    /// ```
     pub fn resize(&mut self, threads: usize) {
         self.imp.resize(threads);
     }
 }
 
-/**
-A drain operation that waits for all tasks to finish.
-*/
+/// A future that completes when all tasks in an executor have finished.
+///
+/// `ExecutorDrain` is returned by [`Executor::drain_async()`] and implements
+/// `Future<Output = ()>`. It polls the executor's internal state to determine
+/// when all tasks have completed execution.
+///
+/// # Examples
+///
+/// ```
+/// # use futures::executor::block_on;
+/// use some_global_executor::Executor;
+/// use some_executor::SomeExecutor;
+/// use some_executor::task::{Task, Configuration};
+///
+/// # block_on(async {
+/// let mut executor = Executor::new("async-drain".to_string(), 2);
+///
+/// // Spawn some work
+/// let task = Task::without_notifications(
+///     "work".to_string(),
+///     Configuration::default(),
+///     async {
+///         // Simulate some work
+///         42
+///     }
+/// );
+/// executor.spawn(task);
+///
+/// // Wait for all tasks to complete
+/// executor.drain_async().await;
+/// # });
+/// ```
 pub struct ExecutorDrain {
     executor: Executor,
 }
@@ -105,6 +292,20 @@ impl SpawnedTask {
 impl Executor {
 
 
+    /// Creates a new executor with default settings.
+    ///
+    /// This creates an executor named "default" with a platform-appropriate
+    /// number of threads (determined by the underlying system implementation).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_global_executor::Executor;
+    ///
+    /// let executor = Executor::new_default();
+    /// assert_eq!(executor.name(), "default");
+    /// executor.drain();
+    /// ```
     pub fn new_default() -> Self {
         Self::new("default".to_string(), sys::default_threadpool_size())
     }
@@ -112,6 +313,37 @@ impl Executor {
 
 
 
+    /// Synchronously waits for all tasks in the executor to complete.
+    ///
+    /// This method blocks the current thread until all spawned tasks have
+    /// finished execution. It uses a busy-wait loop with thread yielding
+    /// to check for task completion.
+    ///
+    /// # Performance
+    ///
+    /// This method logs performance warnings if the drain operation takes
+    /// an unexpectedly long time, which may indicate stuck or long-running tasks.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_global_executor::Executor;
+    /// use some_executor::SomeExecutor;
+    /// use some_executor::task::{Task, Configuration};
+    ///
+    /// let mut executor = Executor::new("sync-drain".to_string(), 2);
+    ///
+    /// // Spawn a task
+    /// let task = Task::without_notifications(
+    ///     "quick-task".to_string(),
+    ///     Configuration::default(),
+    ///     async { 1 + 1 }
+    /// );
+    /// executor.spawn(task);
+    ///
+    /// // Block until all tasks complete
+    /// executor.drain();
+    /// ```
     pub fn drain(self) {
         let _interval = logwise::perfwarn_begin!("Executor::drain busyloop");
         loop {
@@ -123,6 +355,37 @@ impl Executor {
         }
     }
 
+    /// Returns a future that completes when all tasks have finished.
+    ///
+    /// Unlike [`drain()`](Self::drain), this method returns immediately with
+    /// an [`ExecutorDrain`] future that can be awaited. This allows for
+    /// non-blocking waiting in async contexts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use futures::executor::block_on;
+    /// use some_global_executor::Executor;
+    /// use some_executor::SomeExecutor;
+    /// use some_executor::task::{Task, Configuration};
+    ///
+    /// # block_on(async {
+    /// let mut executor = Executor::new("async-example".to_string(), 4);
+    ///
+    /// // Spawn multiple tasks
+    /// for i in 0..5 {
+    ///     let task = Task::without_notifications(
+    ///         format!("task-{}", i),
+    ///         Configuration::default(),
+    ///         async move { i * 2 }
+    ///     );
+    ///     executor.spawn(task);
+    /// }
+    ///
+    /// // Asynchronously wait for completion
+    /// executor.drain_async().await;
+    /// # });
+    /// ```
     pub fn drain_async(self) -> ExecutorDrain {
         ExecutorDrain {
             executor: self
@@ -134,16 +397,40 @@ impl Executor {
         self.imp.spawn_internal(SpawnedTask::new(task));
     }
 
-    /**
-    Sets this executor as the global executor.
-*/
+    /// Sets this executor as the global executor.
+    ///
+    /// After calling this method, this executor will be used as the default
+    /// for global task spawning operations throughout the application.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_global_executor::Executor;
+    ///
+    /// let executor = Executor::new("global".to_string(), 4);
+    /// executor.set_as_global_executor();
+    /// // Now this executor handles global task spawning
+    /// # executor.drain();
+    /// ```
     pub fn set_as_global_executor(&self) {
         some_executor::global_executor::set_global_executor(self.clone_box());
     }
 
-    /**
-    Sets this executor as the thread executor.
-*/
+    /// Sets this executor as the thread-local executor.
+    ///
+    /// After calling this method, this executor will be used as the default
+    /// for thread-local task spawning operations on the current thread.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use some_global_executor::Executor;
+    ///
+    /// let executor = Executor::new("thread-local".to_string(), 2);
+    /// executor.set_as_thread_executor();
+    /// // Now this executor handles thread-local task spawning
+    /// # executor.drain();
+    /// ```
     pub fn set_as_thread_executor(&self) {
         some_executor::thread_executor::set_thread_executor(self.clone_box());
     }
