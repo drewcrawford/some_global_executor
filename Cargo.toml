@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 logwise = "0.3.0"
-#logwise = {path = "../logwise"}
 some_executor = "0.6.1"
 atomic-waker = "1.1.2"
 
@@ -31,7 +30,7 @@ js-sys = "0.3.77"
 wasm_thread = "0.3.3"
 continue = "0.1.1"
 wasm-bindgen-futures = "0.4.50"
-wasm_safe_mutex = { path = "../wasm_safe_mutex"}
+wasm_safe_mutex = { version = "0.1.0"}
 
 
 
