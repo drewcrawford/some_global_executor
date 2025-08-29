@@ -3,14 +3,12 @@ use crate::sys::wasm::static_executor::StaticExecutor;
 use channel::{Receiver, Sender};
 use some_executor::SomeStaticExecutor;
 use some_executor::task::{DynSpawnedTask, TaskID};
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Wake, Waker};
+use std::task::{Context, RawWaker, RawWakerVTable, Waker};
 use wasm_bindgen::JsCast;
 
 pub mod channel;
@@ -116,12 +114,12 @@ impl Thread {
             //wait for a task
             let message = self.thread_receiver.recv().await;
             //logwise::debuginternal_sync!("Thread::run_async received message: {message}",message=logwise::privacy::LogIt(&message));
-            if let Some(mut message) = message {
+            if let Some(message) = message {
                 match message {
-                    TaskMessage::NewTask(mut task) => {
+                    TaskMessage::NewTask(task) => {
                         self.poll_task(task);
                     }
-                    TaskMessage::ResumeTask(mut task_id) => {
+                    TaskMessage::ResumeTask(task_id) => {
                         let pending_tasks = self
                             .pending_tasks
                             .upgrade()
@@ -166,7 +164,7 @@ impl Thread {
         let mut cx = Context::from_waker(&waker);
         let r = DynSpawnedTask::poll(task.imp.task.as_mut(), &mut cx, None);
         match r {
-            std::task::Poll::Ready(r) => {
+            std::task::Poll::Ready(_r) => {
                 logwise::debuginternal_sync!(
                     "Task {task} finished",
                     task = logwise::privacy::LogIt(task.imp.task.task_id())

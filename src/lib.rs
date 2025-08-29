@@ -365,6 +365,7 @@ impl DrainNotify {
 /// Platform-specific executor implementations
 mod sys;
 /// Waker implementation for task notification
+#[cfg(not(target_arch = "wasm32"))]
 mod waker;
 
 /// Internal representation of a spawned task.
