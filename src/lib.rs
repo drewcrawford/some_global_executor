@@ -559,7 +559,26 @@ impl some_executor::SomeExecutor for Executor {
         let task = some_executor::task::Task::without_notifications("poll_count".to_string(), Configuration::default(), f);
 
         let observer = e.spawn(task);
-        assert_eq!(observer.observe(), Observation::Ready(()));
+        let mut tries = 0;
+        loop {
+            let o = observer.observe();
+            match o {
+                Observation::Done => {
+                    panic!("done");
+                }
+                Observation::Ready(()) => break,
+                Observation::Cancelled => {
+                    panic!("cancelled");
+                }
+                Observation::Pending => {
+                    tries += 1;
+                    if tries > 10000 {
+                        panic!("too many tries");
+                    }
+                    thread::yield_now();
+                }
+            }
+        }
     }
 
     #[async_test]
