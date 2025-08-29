@@ -8,11 +8,11 @@ const WOKEN: u64 = u64::MAX - 1;
 const INVALID_BOX: u64 = WOKEN;
 
 struct AlertFn {
-    alert: Box<dyn FnOnce() -> () + Send + 'static>
+    alert: Box<dyn FnOnce() + Send + 'static>
 }
 
 impl AlertFn {
-    fn new<F>(alert: F) -> AlertFn where F: FnOnce() -> () + 'static + Send {
+    fn new<F>(alert: F) -> AlertFn where F: FnOnce() + 'static + Send {
         AlertFn {
             alert: Box::new(alert)
         }
@@ -69,7 +69,7 @@ impl WakeInternal {
         let boxed_alert = Box::new(AlertFn::new(alert));
         let raw_alert = Box::into_raw(boxed_alert) as u64;
         assert!(raw_alert < INVALID_BOX);
-        match self.inline_wake.compare_exchange(NOT_WOKEN, raw_alert as u64, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) {
+        match self.inline_wake.compare_exchange(NOT_WOKEN, raw_alert, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) {
             Ok(_) => {},
             Err(NOT_WOKEN) => {
                 unreachable!("Spurious wakeup?")
@@ -90,11 +90,8 @@ impl WakeInternal {
 impl Drop for WakeInternal {
     fn drop(&mut self) {
         let inline_wake = self.inline_wake.load(std::sync::atomic::Ordering::Relaxed);
-        if inline_wake == WOKEN {
-            return;
-        }
-        else if inline_wake == NOT_WOKEN {
-            return;
+        if inline_wake == WOKEN || inline_wake == NOT_WOKEN {
+            
         }
         else {
             let b = unsafe { Box::from_raw(inline_wake as *mut ()) };

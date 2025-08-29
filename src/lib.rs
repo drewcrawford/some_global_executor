@@ -568,16 +568,14 @@ impl some_executor::SomeExecutor for Executor {
         observer
     }
 
-    fn spawn_async<'s, F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&'s mut self, task: Task<F, Notifier>) -> impl Future<Output=impl Observer<Value=F::Output>> + Send + 's
+    async fn spawn_async<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&mut self, task: Task<F, Notifier>) -> impl Observer<Value=F::Output>
     where
         Self: Sized,
         F::Output: Send + Unpin,
     {
-        async {
-            let (spawned,observer) = task.spawn(self);
-            self.spawn_internal(Box::new(spawned));
-            observer
-        }
+        let (spawned,observer) = task.spawn(self);
+        self.spawn_internal(Box::new(spawned));
+        observer
     }
 
     fn spawn_objsafe(&mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Observer<Value=Box<dyn Any + Send>, Output=some_executor::observer::FinishedObservation<Box<dyn Any + Send>>> + Send>
@@ -588,7 +586,8 @@ impl some_executor::SomeExecutor for Executor {
     }
 
     fn spawn_objsafe_async<'s>(&'s mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Future<Output=Box<dyn Observer<Value=Box<dyn Any + Send>, Output=some_executor::observer::FinishedObservation<Box<dyn Any + Send>>> + Send>> + 's> {
-        Box::new(async {
+       #[allow(clippy::async_yields_async)]
+        Box::new(async move {
             self.spawn_objsafe(task)
         })
     }
