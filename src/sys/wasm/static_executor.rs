@@ -1,21 +1,24 @@
 /*!
 A wasm-friendly static executor.
 */
-use std::cell::RefCell;
-use std::convert::Infallible;
-use std::rc::Rc;
-use js_sys::{Function,Reflect};
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use js_sys::{Function, Reflect};
 use some_executor::observer::{Observer, ObserverNotified};
-use some_executor::{BoxedStaticObserver, BoxedStaticObserverFuture, DynStaticExecutor, ObjSafeStaticTask, SomeStaticExecutor};
 use some_executor::static_support::OwnedSomeStaticExecutorErasingNotifier;
 use some_executor::task::Task;
-use wasm_bindgen::closure::Closure;
+use some_executor::{
+    BoxedStaticObserver, BoxedStaticObserverFuture, DynStaticExecutor, ObjSafeStaticTask,
+    SomeStaticExecutor,
+};
+use std::cell::RefCell;
+use std::convert::Infallible;
+use std::future::Future;
+use std::pin::Pin;
+use std::rc::Rc;
+use std::task::{Context, Poll};
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub struct StaticExecutor {
     close_info: Rc<RefCell<CloseInfo>>,
 }
@@ -23,7 +26,7 @@ pub struct StaticExecutor {
 impl StaticExecutor {
     pub fn new() -> Self {
         StaticExecutor {
-            close_info: Rc::new(RefCell::new(CloseInfo::new()))
+            close_info: Rc::new(RefCell::new(CloseInfo::new())),
         }
     }
 }
@@ -44,7 +47,6 @@ impl CloseInfo {
         }
     }
 }
-
 
 /**
 Patches the worker close function.
@@ -103,8 +105,7 @@ fn patch_if_needed(close_info: &Rc<RefCell<CloseInfo>>) {
     if close_info.borrow().installed_close_handler.is_some() {
         // Already patched, do nothing
         return;
-    }
-    else {
+    } else {
         let global = js_sys::global();
 
         // 2. Grab the original `close` function (`fn () -> !`)
@@ -119,7 +120,7 @@ fn patch_if_needed(close_info: &Rc<RefCell<CloseInfo>>) {
             //move our close_info into the closure itself.
             let mut borrow_mut = move_close_info.borrow_mut();
             borrow_mut.close_is_called = true;
-            consider_closing(&mut*borrow_mut)
+            consider_closing(&mut *borrow_mut)
         }) as Box<dyn Fn()>);
 
         // 4. Replace `self.close` with our wrapper
@@ -150,7 +151,7 @@ fn consider_closing(info: &mut CloseInfo) {
     }
 }
 
-struct WasmFuture<F>{
+struct WasmFuture<F> {
     future: F,
     close_info: Rc<RefCell<CloseInfo>>,
 }
@@ -160,7 +161,10 @@ impl<F: Future> Future for WasmFuture<F> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (future, close_info) = unsafe {
             let s = self.get_unchecked_mut();
-            (Pin::new_unchecked(&mut s.future), Pin::new(&mut s.close_info))
+            (
+                Pin::new_unchecked(&mut s.future),
+                Pin::new(&mut s.close_info),
+            )
         };
         let r = future.poll(cx);
         match r {
@@ -170,21 +174,23 @@ impl<F: Future> Future for WasmFuture<F> {
                 close_info.borrow_mut().running_tasks -= 1;
                 consider_closing(&mut close_info.borrow_mut());
                 Poll::Ready(output)
-
             }
         }
     }
-
 }
-
 
 impl StaticExecutor {
     pub fn spawn<F>(&self, fut: F)
-    where F: Future<Output = ()> + 'static {
+    where
+        F: Future<Output = ()> + 'static,
+    {
         patch_if_needed(&self.close_info);
         //increment the running tasks
         self.close_info.borrow_mut().running_tasks += 1;
-        let t = WasmFuture {future: fut, close_info: self.close_info.clone()};
+        let t = WasmFuture {
+            future: fut,
+            close_info: self.close_info.clone(),
+        };
         wasm_bindgen_futures::spawn_local(t);
     }
 }
@@ -192,35 +198,42 @@ impl StaticExecutor {
 impl SomeStaticExecutor for StaticExecutor {
     type ExecutorNotifier = Infallible;
 
-    fn spawn_static<F, Notifier: ObserverNotified<F::Output>>(&mut self, task: Task<F, Notifier>) -> impl Observer<Value=F::Output>
+    fn spawn_static<F, Notifier: ObserverNotified<F::Output>>(
+        &mut self,
+        task: Task<F, Notifier>,
+    ) -> impl Observer<Value = F::Output>
     where
         Self: Sized,
         F: Future + 'static,
-        F::Output: 'static + Unpin
+        F::Output: 'static + Unpin,
     {
-        let (spawned,observer) = task.spawn_static(self);
+        let (spawned, observer) = task.spawn_static(self);
         self.spawn(async {
             spawned.into_future().await; //swallow return value
         });
         observer
     }
 
-    fn spawn_static_async<F, Notifier: ObserverNotified<F::Output>>(&mut self, task: Task<F, Notifier>) -> impl Future<Output=impl Observer<Value=F::Output>>
+    fn spawn_static_async<F, Notifier: ObserverNotified<F::Output>>(
+        &mut self,
+        task: Task<F, Notifier>,
+    ) -> impl Future<Output = impl Observer<Value = F::Output>>
     where
         Self: Sized,
         F: Future + 'static,
-        F::Output: 'static + Unpin
+        F::Output: 'static + Unpin,
     {
-        async move {
-            self.spawn_static(task)
-        }
+        async move { self.spawn_static(task) }
     }
 
     fn spawn_static_objsafe(&mut self, task: ObjSafeStaticTask) -> BoxedStaticObserver {
         Box::new(self.spawn_static(task))
     }
 
-    fn spawn_static_objsafe_async<'s>(&'s mut self, task: ObjSafeStaticTask) -> BoxedStaticObserverFuture<'s> {
+    fn spawn_static_objsafe_async<'s>(
+        &'s mut self,
+        task: ObjSafeStaticTask,
+    ) -> BoxedStaticObserverFuture<'s> {
         Box::new(async {
             let o = self.spawn_static_objsafe(task);
             o

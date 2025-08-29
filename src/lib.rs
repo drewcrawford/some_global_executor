@@ -50,7 +50,7 @@
 //!
 //! let observer = executor.spawn(task);
 //! // Task is now running in the background on one of the worker threads
-//! 
+//!
 //! // Wait for all tasks to complete before shutting down
 //! executor.drain();
 //! ```
@@ -149,18 +149,18 @@
 //! ```
 #![warn(missing_docs)]
 
+use atomic_waker::AtomicWaker;
+use logwise::{debuginternal_sync, declare_logging_domain};
+use some_executor::DynExecutor;
+use some_executor::SomeExecutor;
+use some_executor::observer::{Observer, ObserverNotified};
+use some_executor::task::{DynSpawnedTask, Task};
 use std::any::Any;
 use std::convert::Infallible;
 use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::atomic::AtomicUsize;
-use atomic_waker::AtomicWaker;
-use logwise::{debuginternal_sync, declare_logging_domain};
-use some_executor::DynExecutor;
-use some_executor::observer::{Observer, ObserverNotified};
-use some_executor::task::{DynSpawnedTask, Task};
-use some_executor::SomeExecutor;
 
 /// re-exports the `SomeExecutor` crate for convenience.
 pub use some_executor;
@@ -193,7 +193,7 @@ declare_logging_domain!();
 /// // Clean up when done
 /// executor.drain();
 /// ```
-#[derive(Debug,PartialEq, Eq, Hash,Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Executor {
     imp: sys::Executor,
     name: String,
@@ -214,7 +214,7 @@ impl Executor {
     ///
     /// // Create an executor with 8 worker threads
     /// let executor = Executor::new("high-performance".to_string(), 8);
-    /// 
+    ///
     /// // Clean up
     /// executor.drain();
     /// ```
@@ -224,7 +224,11 @@ impl Executor {
     /// This method logs the creation of the executor using the logwise framework,
     /// including the name and thread count for debugging purposes.
     pub fn new(name: String, threads: usize) -> Self {
-        logwise::info_sync!("Creating executor with name {name} and {threads} threads", name=logwise::privacy::LogIt(&name), threads=logwise::privacy::LogIt(threads));
+        logwise::info_sync!(
+            "Creating executor with name {name} and {threads} threads",
+            name = logwise::privacy::LogIt(&name),
+            threads = logwise::privacy::LogIt(threads)
+        );
         let name_clone = name.clone();
         let inner = sys::Executor::new(name, threads);
         Executor {
@@ -262,13 +266,13 @@ impl Executor {
     /// use some_global_executor::Executor;
     ///
     /// let mut executor = Executor::new("dynamic".to_string(), 2);
-    /// 
+    ///
     /// // Increase thread count for heavy workload
     /// executor.resize(8);
-    /// 
+    ///
     /// // Later, reduce thread count
     /// executor.resize(4);
-    /// 
+    ///
     /// executor.drain();
     /// ```
     pub fn resize(&mut self, threads: usize) {
@@ -317,12 +321,20 @@ pub struct ExecutorDrain {
 impl Future for ExecutorDrain {
     type Output = ();
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
         //need to register prior to check
         let drain_notify = self.executor.imp.drain_notify();
         drain_notify.waker.register(cx.waker());
-        let running_tasks = drain_notify.running_tasks.load(std::sync::atomic::Ordering::Relaxed);
-        debuginternal_sync!("ExecutorDrain::poll running_tasks={running_tasks}",running_tasks=(running_tasks as u64));
+        let running_tasks = drain_notify
+            .running_tasks
+            .load(std::sync::atomic::Ordering::Relaxed);
+        debuginternal_sync!(
+            "ExecutorDrain::poll running_tasks={running_tasks}",
+            running_tasks = (running_tasks as u64)
+        );
         if running_tasks == 0 {
             std::task::Poll::Ready(())
         } else {
@@ -338,7 +350,7 @@ impl Future for ExecutorDrain {
 #[derive(Debug)]
 struct DrainNotify {
     running_tasks: AtomicUsize,
-    waker: AtomicWaker
+    waker: AtomicWaker,
 }
 
 impl DrainNotify {
@@ -350,16 +362,10 @@ impl DrainNotify {
     }
 }
 
-/// Waker implementation for task notification
-mod waker;
 /// Platform-specific executor implementations
 mod sys;
-
-
-
-
-
-
+/// Waker implementation for task notification
+mod waker;
 
 /// Internal representation of a spawned task.
 ///
@@ -370,20 +376,15 @@ struct SpawnedTask {
     imp: sys::SpawnedTask,
 }
 
-
 impl SpawnedTask {
     fn new(task: Box<dyn DynSpawnedTask<Infallible>>) -> Self {
         Self {
             imp: sys::SpawnedTask::new(task),
         }
     }
-    
 }
 
-
 impl Executor {
-
-
     /// Creates a new executor with default settings.
     ///
     /// This creates an executor named "default" with a platform-appropriate
@@ -401,9 +402,6 @@ impl Executor {
     pub fn new_default() -> Self {
         Self::new("default".to_string(), sys::default_threadpool_size())
     }
-
-
-
 
     /// Synchronously waits for all tasks in the executor to complete.
     ///
@@ -439,7 +437,11 @@ impl Executor {
     pub fn drain(self) {
         let _interval = logwise::perfwarn_begin!("Executor::drain busyloop");
         loop {
-            let running_tasks = self.imp.drain_notify().running_tasks.load(std::sync::atomic::Ordering::Relaxed);
+            let running_tasks = self
+                .imp
+                .drain_notify()
+                .running_tasks
+                .load(std::sync::atomic::Ordering::Relaxed);
             if running_tasks == 0 {
                 break;
             }
@@ -481,11 +483,8 @@ impl Executor {
     /// executor.drain();
     /// ```
     pub fn drain_async(self) -> ExecutorDrain {
-        ExecutorDrain {
-            executor: self
-        }
+        ExecutorDrain { executor: self }
     }
-
 
     fn spawn_internal(&mut self, task: Box<dyn DynSpawnedTask<Infallible>>) {
         self.imp.spawn_internal(SpawnedTask::new(task));
@@ -510,10 +509,10 @@ impl Executor {
     ///
     /// let executor = Executor::new("global".to_string(), 4);
     /// executor.set_as_global_executor();
-    /// 
+    ///
     /// // The global executor is now available for use by any code
     /// // that calls some_executor::global_executor::spawn()
-    /// 
+    ///
     /// # executor.drain();
     /// ```
     pub fn set_as_global_executor(&self) {
@@ -539,10 +538,10 @@ impl Executor {
     ///
     /// let executor = Executor::new("thread-local".to_string(), 2);
     /// executor.set_as_thread_executor();
-    /// 
+    ///
     /// // This thread now uses this executor for thread-local spawning
     /// // via some_executor::thread_executor::spawn()
-    /// 
+    ///
     /// # executor.drain();
     /// ```
     pub fn set_as_thread_executor(&self) {
@@ -558,38 +557,69 @@ impl Executor {
 impl some_executor::SomeExecutor for Executor {
     type ExecutorNotifier = Infallible;
 
-    fn spawn<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&mut self, task: Task<F, Notifier>) -> impl Observer<Value=F::Output>
+    fn spawn<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(
+        &mut self,
+        task: Task<F, Notifier>,
+    ) -> impl Observer<Value = F::Output>
     where
         Self: Sized,
-        F::Output: Send
+        F::Output: Send,
     {
-        let (spawned,observer) = task.spawn(self);
+        let (spawned, observer) = task.spawn(self);
         self.spawn_internal(Box::new(spawned));
         observer
     }
 
-    async fn spawn_async<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(&mut self, task: Task<F, Notifier>) -> impl Observer<Value=F::Output>
+    async fn spawn_async<F: Future + Send + 'static, Notifier: ObserverNotified<F::Output> + Send>(
+        &mut self,
+        task: Task<F, Notifier>,
+    ) -> impl Observer<Value = F::Output>
     where
         Self: Sized,
         F::Output: Send + Unpin,
     {
-        let (spawned,observer) = task.spawn(self);
+        let (spawned, observer) = task.spawn(self);
         self.spawn_internal(Box::new(spawned));
         observer
     }
 
-    fn spawn_objsafe(&mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Observer<Value=Box<dyn Any + Send>, Output=some_executor::observer::FinishedObservation<Box<dyn Any + Send>>> + Send>
-    {
-        let (spawned,observer) = task.spawn_objsafe(self);
+    fn spawn_objsafe(
+        &mut self,
+        task: Task<
+            Pin<Box<dyn Future<Output = Box<dyn Any + 'static + Send>> + 'static + Send>>,
+            Box<dyn ObserverNotified<dyn Any + Send> + Send>,
+        >,
+    ) -> Box<
+        dyn Observer<
+                Value = Box<dyn Any + Send>,
+                Output = some_executor::observer::FinishedObservation<Box<dyn Any + Send>>,
+            > + Send,
+    > {
+        let (spawned, observer) = task.spawn_objsafe(self);
         self.spawn_internal(Box::new(spawned));
         Box::new(observer)
     }
 
-    fn spawn_objsafe_async<'s>(&'s mut self, task: Task<Pin<Box<dyn Future<Output=Box<dyn Any + 'static + Send>> + 'static + Send>>, Box<dyn ObserverNotified<dyn Any + Send> + Send>>) -> Box<dyn Future<Output=Box<dyn Observer<Value=Box<dyn Any + Send>, Output=some_executor::observer::FinishedObservation<Box<dyn Any + Send>>> + Send>> + 's> {
-       #[allow(clippy::async_yields_async)]
-        Box::new(async move {
-            self.spawn_objsafe(task)
-        })
+    fn spawn_objsafe_async<'s>(
+        &'s mut self,
+        task: Task<
+            Pin<Box<dyn Future<Output = Box<dyn Any + 'static + Send>> + 'static + Send>>,
+            Box<dyn ObserverNotified<dyn Any + Send> + Send>,
+        >,
+    ) -> Box<
+        dyn Future<
+                Output = Box<
+                    dyn Observer<
+                            Value = Box<dyn Any + Send>,
+                            Output = some_executor::observer::FinishedObservation<
+                                Box<dyn Any + Send>,
+                            >,
+                        > + Send,
+                >,
+            > + 's,
+    > {
+        #[allow(clippy::async_yields_async)]
+        Box::new(async move { self.spawn_objsafe(task) })
     }
 
     fn clone_box(&self) -> Box<DynExecutor> {
@@ -642,9 +672,7 @@ impl From<ExecutorDrain> for Executor {
 /// ```
 impl From<Executor> for ExecutorDrain {
     fn from(executor: Executor) -> Self {
-        ExecutorDrain {
-            executor
-        }
+        ExecutorDrain { executor }
     }
 }
 
@@ -689,30 +717,24 @@ impl AsMut<Executor> for ExecutorDrain {
     }
 }
 
-
-
-
-
-
-
-#[cfg(test)] mod tests {
+#[cfg(test)]
+mod tests {
+    use some_executor::SomeExecutor;
+    use some_executor::observer::Observation;
+    use some_executor::observer::Observer;
+    use some_executor::task::Configuration;
     use std::future::Future;
     use std::pin::Pin;
     use std::task::{Context, Poll};
-    use some_executor::observer::Observation;
-    use some_executor::SomeExecutor;
-    use some_executor::task::Configuration;
     use test_executors::async_test;
-    use some_executor::observer::Observer;
 
-    #[cfg(target_arch = "wasm32")]
-    use wasm_thread as thread;
     #[cfg(not(target_arch = "wasm32"))]
     use std::thread;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_thread as thread;
 
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
@@ -726,13 +748,17 @@ impl AsMut<Executor> for ExecutorDrain {
     async fn spawn() {
         logwise::context::Context::reset("spawn".to_string());
         let mut e = super::Executor::new("test".to_string(), 1);
-        let (sender,fut) = r#continue::continuation();
-        let t = some_executor::task::Task::without_notifications("test spawn".to_string(), Configuration::default(), async move {
-            sender.send(1);
-        });
+        let (sender, fut) = r#continue::continuation();
+        let t = some_executor::task::Task::without_notifications(
+            "test spawn".to_string(),
+            Configuration::default(),
+            async move {
+                sender.send(1);
+            },
+        );
         let _observer = e.spawn(t);
         let r = fut.await;
-        assert_eq!(r,1);
+        assert_eq!(r, 1);
     }
 
     #[test_executors::async_test]
@@ -744,7 +770,10 @@ impl AsMut<Executor> for ExecutorDrain {
             type Output = ();
 
             fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                logwise::debuginternal_sync!("poll_count is polling against {count}",count=self.0);
+                logwise::debuginternal_sync!(
+                    "poll_count is polling against {count}",
+                    count = self.0
+                );
                 if self.0 == 0 {
                     Poll::Ready(())
                 } else {
@@ -757,7 +786,11 @@ impl AsMut<Executor> for ExecutorDrain {
         let f = F(3);
         let mut e = super::Executor::new("poll_count".to_string(), 4);
 
-        let task = some_executor::task::Task::without_notifications("poll_count".to_string(), Configuration::default(), f);
+        let task = some_executor::task::Task::without_notifications(
+            "poll_count".to_string(),
+            Configuration::default(),
+            f,
+        );
 
         let observer = e.spawn(task);
         let mut tries = 0;
@@ -802,11 +835,14 @@ impl AsMut<Executor> for ExecutorDrain {
                     Poll::Pending
                 }
             }
-
         }
         let f = F(10);
         let mut e = super::Executor::new("poll_count".to_string(), 4);
-        let task = some_executor::task::Task::without_notifications("poll_count".to_string(), Configuration::default(), f);
+        let task = some_executor::task::Task::without_notifications(
+            "poll_count".to_string(),
+            Configuration::default(),
+            f,
+        );
         let observer = e.spawn(task);
         e.drain_async().await;
         assert_eq!(observer.observe(), Observation::Ready(()));

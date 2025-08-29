@@ -1,18 +1,18 @@
-use std::convert::Infallible;
-use std::pin::Pin;
-use std::sync::{Arc};
-use std::task::Waker;
-use crossbeam_channel::{select_biased, Receiver, Sender};
-use logwise::info_sync;
-use some_executor::task::DynSpawnedTask;
 use crate::DrainNotify;
 use crate::waker::WakeInternal;
+use crossbeam_channel::{Receiver, Sender, select_biased};
+use logwise::info_sync;
+use some_executor::task::DynSpawnedTask;
+use std::convert::Infallible;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::Waker;
 
 #[derive(Debug)]
 pub struct SpawnedTask {
     task: Pin<Box<dyn DynSpawnedTask<Infallible>>>,
     waker: Waker,
-    wake_internal: Arc<WakeInternal>
+    wake_internal: Arc<WakeInternal>,
 }
 
 pub fn default_threadpool_size() -> usize {
@@ -30,19 +30,32 @@ impl SpawnedTask {
         }
     }
 
-    pub(crate) fn run(mut self, task_sender: Sender<crate::SpawnedTask>, drain_notify: &crate::DrainNotify) {
+    pub(crate) fn run(
+        mut self,
+        task_sender: Sender<crate::SpawnedTask>,
+        drain_notify: &crate::DrainNotify,
+    ) {
         let mut context = std::task::Context::from_waker(&self.waker);
         self.wake_internal.reset();
-        logwise::debuginternal_sync!("Polling task {task}",task=logwise::privacy::LogIt(self.task.task_id()));
+        logwise::debuginternal_sync!(
+            "Polling task {task}",
+            task = logwise::privacy::LogIt(self.task.task_id())
+        );
         let r = DynSpawnedTask::poll(self.task.as_mut(), &mut context, None);
         match r {
             std::task::Poll::Ready(_) => {
-                let old = drain_notify.running_tasks.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                logwise::debuginternal_sync!("Task {task} finished, running_tasks={running_tasks}",task=logwise::privacy::LogIt(self.task.task_id()),running_tasks=(old - 1));
+                let old = drain_notify
+                    .running_tasks
+                    .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                logwise::debuginternal_sync!(
+                    "Task {task} finished, running_tasks={running_tasks}",
+                    task = logwise::privacy::LogIt(self.task.task_id()),
+                    running_tasks = (old - 1)
+                );
                 if old == 1 {
                     drain_notify.waker.wake();
                 }
-            },
+            }
             std::task::Poll::Pending => {
                 let move_wake_internal = self.wake_internal.clone();
                 move_wake_internal.check_wake(move || {
@@ -87,10 +100,7 @@ impl Thread {
             thread_receiver,
         }
     }
-
-
 }
-
 
 impl Thread {
     fn run(self) {
@@ -145,7 +155,7 @@ struct Threadpool {
 impl Threadpool {
     fn new(name: String, size: usize) -> Self {
         let mut vec = Vec::with_capacity(size);
-        let (task_sender,task_receiver) = crossbeam_channel::unbounded();
+        let (task_sender, task_receiver) = crossbeam_channel::unbounded();
         let (thread_sender, thread_receiver) = crossbeam_channel::unbounded();
         let drain_notify = Arc::new(crate::DrainNotify::new());
         for t in 0..size {
@@ -170,12 +180,15 @@ impl Threadpool {
         }
     }
 
-    fn build_thread(name: &str, thread_no: usize,thread: Thread) -> std::thread::JoinHandle<()> {
+    fn build_thread(name: &str, thread_no: usize, thread: Thread) -> std::thread::JoinHandle<()> {
         let name = format!("some_global_executor {}-{}", name, thread_no);
         std::thread::Builder::new()
             .name(name)
             .spawn(move || {
-                let c = logwise::context::Context::new_task(None, "some_global_executor threadpool".to_string());
+                let c = logwise::context::Context::new_task(
+                    None,
+                    "some_global_executor threadpool".to_string(),
+                );
                 c.set_current();
                 thread.run();
             })
@@ -202,19 +215,16 @@ impl Threadpool {
             }
             //gc
             lock.retain(|handle| !handle.is_finished());
-
         }
     }
 }
-
-
 
 #[derive(Debug)]
 struct Inner {
     threadpool: Threadpool,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct Executor {
     inner: Arc<Inner>,
 }
@@ -234,26 +244,35 @@ impl std::hash::Hash for Executor {
 
 impl Executor {
     pub fn new(name: String, size: usize) -> Self {
-        info_sync!("Executor::new name={name} size={size}",name=(&name as &str),size=(size as u64));
+        info_sync!(
+            "Executor::new name={name} size={size}",
+            name = (&name as &str),
+            size = (size as u64)
+        );
         let threadpool = Threadpool::new(name, size);
-        let inner = Arc::new(Inner {
-            threadpool,
-        });
-        Self {
-            inner,
-        }
+        let inner = Arc::new(Inner { threadpool });
+        Self { inner }
     }
 
     pub fn drain_notify(&self) -> &Arc<DrainNotify> {
         &self.inner.threadpool.drain_notify
     }
     pub fn spawn_internal(&self, spawned_task: crate::SpawnedTask) {
-        self.drain_notify().running_tasks.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-        logwise::debuginternal_sync!("Sending task {task}",task=logwise::privacy::LogIt(spawned_task.imp.task_id()));
-        self.inner.threadpool.task_sender.send(spawned_task).unwrap();
+        self.drain_notify()
+            .running_tasks
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        logwise::debuginternal_sync!(
+            "Sending task {task}",
+            task = logwise::privacy::LogIt(spawned_task.imp.task_id())
+        );
+        self.inner
+            .threadpool
+            .task_sender
+            .send(spawned_task)
+            .unwrap();
     }
     pub fn resize(&mut self, size: usize) {
-        logwise::debuginternal_sync!("Executor::resize size={size}",size=(size as u64));
+        logwise::debuginternal_sync!("Executor::resize size={size}", size = (size as u64));
         self.inner.threadpool.resize(size);
     }
 }

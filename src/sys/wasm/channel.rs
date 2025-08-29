@@ -11,9 +11,9 @@ It provides
 * infinite buffer
  */
 
+use std::sync::Arc;
 use std::sync::Weak;
 use wasm_safe_mutex::Mutex;
-use std::sync::Arc;
 
 #[derive(Debug)]
 struct SharedLocked<T> {
@@ -46,24 +46,27 @@ pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
             resume: Vec::new(),
         }),
     });
-    let sender = Sender { shared: shared.clone() };
-    let receiver = Receiver { shared: Arc::downgrade(&shared) };
+    let sender = Sender {
+        shared: shared.clone(),
+    };
+    let receiver = Receiver {
+        shared: Arc::downgrade(&shared),
+    };
     (sender, receiver)
 }
 
-impl <T> Sender<T> {
-    pub fn send(&self, value: T)  {
+impl<T> Sender<T> {
+    pub fn send(&self, value: T) {
         let resume = self.shared.locked.with_mut_sync(|data| {
             if let Some(resume) = data.resume.pop() {
                 Some((resume, value))
-            }
-            else {
+            } else {
                 data.buffer.push(value);
                 None
             }
         });
         match resume {
-            Some((resume,value)) => {
+            Some((resume, value)) => {
                 // If we had a continuation, send the value to it
                 resume.send(value);
             }
@@ -87,21 +90,23 @@ impl<T> Clone for Receiver<T> {
     }
 }
 
-impl <T> Receiver<T> {
+impl<T> Receiver<T> {
     pub async fn recv(&self) -> Option<T> {
         if let Some(shared) = self.shared.upgrade() {
-            let r = shared.locked.with_mut_async(|data| {
-                if let Some(value) = data.buffer.pop() {
-                    Ok(value)
-                }
-                else {
-                    // If the buffer is empty, we need to wait for a sender
-                    let (send, fut) = r#continue::continuation();
-                    data.resume.push(send);
-                    Err(fut)
-                }
-            }).await;
-            match r{
+            let r = shared
+                .locked
+                .with_mut_async(|data| {
+                    if let Some(value) = data.buffer.pop() {
+                        Ok(value)
+                    } else {
+                        // If the buffer is empty, we need to wait for a sender
+                        let (send, fut) = r#continue::continuation();
+                        data.resume.push(send);
+                        Err(fut)
+                    }
+                })
+                .await;
+            match r {
                 Ok(value) => Some(value),
                 Err(send) => {
                     // If we had a continuation, we need to wait for it
