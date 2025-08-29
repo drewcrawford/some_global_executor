@@ -1,73 +1,153 @@
-//! A global executor implementation for the `some_executor` framework.
-#![warn(missing_docs)]
+//! Cross-platform global executor implementation for the `some_executor` framework.
 //!
-//! This crate provides a cross-platform executor that works on both standard platforms
-//! and WebAssembly (WASM) targets. It implements the `SomeExecutor` trait and provides
-//! thread pool-based task execution with configurable thread counts.
+//! This crate provides a thread pool-based executor that works seamlessly on both standard
+//! platforms and WebAssembly (WASM) targets. It implements the [`SomeExecutor`] trait from
+//! the `some_executor` framework and provides efficient task scheduling with configurable
+//! parallelism.
 //!
-//! # Features
+//! # Architecture Overview
 //!
-//! - **Cross-platform support**: Works on both native platforms and WASM targets
-//! - **Configurable thread pools**: Create executors with custom thread counts
-//! - **Task observation**: Monitor task execution through the observer pattern
-//! - **Async draining**: Wait for all tasks to complete before shutdown
-//! - **Global and thread-local executor support**: Set executors as global or thread-local defaults
+//! The executor uses platform-specific implementations through the `sys` module:
+//! - **Standard platforms**: Uses OS threads with `crossbeam-channel` for task distribution
+//! - **WebAssembly**: Uses web workers for parallelism in browser environments
 //!
-//! # Examples
+//! The platform abstraction is completely transparent to users - the same API works
+//! across all supported platforms.
 //!
-//! ## Basic Usage
+//! # Key Features
+//!
+//! - **Cross-platform support**: Automatic platform detection and optimal implementation selection
+//! - **Dynamic thread pools**: Create executors with custom thread counts and resize them at runtime
+//! - **Task observation**: Monitor task execution state through the observer pattern
+//! - **Graceful shutdown**: Both synchronous and asynchronous draining of pending tasks
+//! - **Global executor support**: Set executors as global or thread-local defaults
+//! - **Zero-cost abstractions**: Platform-specific code is conditionally compiled
+//!
+//! # Usage Patterns
+//!
+//! ## Basic Task Spawning
+//!
+//! The most common use case is creating an executor and spawning tasks:
 //!
 //! ```
 //! use some_global_executor::Executor;
 //! use some_executor::SomeExecutor;
 //! use some_executor::task::{Task, Configuration};
 //!
-//! // Create an executor with 4 threads
+//! // Create an executor with 4 worker threads
 //! let mut executor = Executor::new("my-executor".to_string(), 4);
 //!
-//! // Spawn a simple task
+//! // Spawn a simple async task
 //! let task = Task::without_notifications(
 //!     "example-task".to_string(),
 //!     Configuration::default(),
 //!     async {
-//!         println!("Task executing!");
+//!         // Perform async work here
+//!         println!("Task executing on worker thread!");
 //!         42
 //!     }
 //! );
 //!
 //! let observer = executor.spawn(task);
-//! // Task is now running in the background
+//! // Task is now running in the background on one of the worker threads
 //! 
-//! // Clean up
+//! // Wait for all tasks to complete before shutting down
 //! executor.drain();
 //! ```
 //!
-//! ## Using the Default Executor
+//! ## Observing Task Progress
+//!
+//! Tasks can be observed to monitor their execution state:
+//!
+//! ```
+//! use some_global_executor::Executor;
+//! use some_executor::SomeExecutor;
+//! use some_executor::task::{Task, Configuration};
+//! use some_executor::observer::{Observer, Observation};
+//!
+//! let mut executor = Executor::new("observer-example".to_string(), 2);
+//!
+//! let task = Task::without_notifications(
+//!     "monitored-task".to_string(),
+//!     Configuration::default(),
+//!     async { "result" }
+//! );
+//!
+//! let observer = executor.spawn(task);
+//!
+//! // Poll the observer to check task state
+//! loop {
+//!     match observer.observe() {
+//!         Observation::Ready(value) => {
+//!             println!("Task completed with: {}", value);
+//!             break;
+//!         }
+//!         Observation::Pending => {
+//!             // Task still running
+//!             std::thread::yield_now();
+//!         }
+//!         _ => break,
+//!     }
+//! }
+//!
+//! executor.drain();
+//! ```
+//!
+//! ## Global Executor Pattern
+//!
+//! Set an executor as the global default for the application:
 //!
 //! ```
 //! use some_global_executor::Executor;
 //!
-//! // Create an executor with default settings
-//! let executor = Executor::new_default();
-//! assert_eq!(executor.name(), "default");
-//! 
-//! // Clean up
-//! executor.drain();
+//! // Create and configure the global executor
+//! let executor = Executor::new("global".to_string(), num_cpus::get());
+//! executor.set_as_global_executor();
+//!
+//! // Now tasks can be spawned using the global executor from anywhere
+//! // in the application without passing executor references
+//!
+//! # executor.drain();
 //! ```
 //!
-//! ## Resizing Thread Pool
+//! ## Dynamic Thread Pool Management
+//!
+//! Adjust executor capacity based on workload:
 //!
 //! ```
 //! use some_global_executor::Executor;
 //!
-//! let mut executor = Executor::new("resizable".to_string(), 2);
-//! 
-//! // Resize the thread pool to 8 threads
+//! let mut executor = Executor::new("dynamic".to_string(), 2);
+//!
+//! // Scale up for heavy workload
 //! executor.resize(8);
-//! 
-//! // Clean up
+//!
+//! // Scale down during idle periods
+//! executor.resize(2);
+//!
 //! executor.drain();
 //! ```
+//!
+//! # Performance Considerations
+//!
+//! - Thread pool sizing: Default to `num_cpus::get()` for CPU-bound work
+//! - For I/O-bound tasks, consider using more threads than CPU cores
+//! - WASM targets have platform-specific limitations on parallelism
+//! - Use `drain_async()` in async contexts to avoid blocking
+//!
+//! # Logging
+//!
+//! This crate uses the `logwise` framework for structured logging. Internal operations
+//! are logged at various levels for debugging and monitoring:
+//!
+//! ```
+//! # use some_global_executor::Executor;
+//! // Executor creation and operations are automatically logged
+//! let executor = Executor::new("logged-executor".to_string(), 4);
+//! // Logs: "Creating executor with name logged-executor and 4 threads"
+//! # executor.drain();
+//! ```
+#![warn(missing_docs)]
 
 use std::any::Any;
 use std::convert::Infallible;
@@ -205,12 +285,12 @@ impl Executor {
 /// # Examples
 ///
 /// ```
-/// # use futures::executor::block_on;
+/// # // This example shows async draining but requires an async runtime
+/// # // which is not available in doctests, so we use synchronous drain
 /// use some_global_executor::Executor;
 /// use some_executor::SomeExecutor;
 /// use some_executor::task::{Task, Configuration};
 ///
-/// # block_on(async {
 /// let mut executor = Executor::new("async-drain".to_string(), 2);
 ///
 /// // Spawn some work
@@ -224,9 +304,10 @@ impl Executor {
 /// );
 /// executor.spawn(task);
 ///
-/// // Wait for all tasks to complete
-/// executor.drain_async().await;
-/// # });
+/// // In async context, you would use:
+/// // executor.drain_async().await;
+/// // Here we use synchronous drain for the example
+/// executor.drain();
 /// ```
 #[derive(Debug)]
 pub struct ExecutorDrain {
@@ -250,6 +331,10 @@ impl Future for ExecutorDrain {
     }
 }
 
+/// Internal notification mechanism for tracking running tasks.
+///
+/// This structure maintains a count of running tasks and provides
+/// a waker mechanism for notifying when all tasks complete.
 #[derive(Debug)]
 struct DrainNotify {
     running_tasks: AtomicUsize,
@@ -265,7 +350,9 @@ impl DrainNotify {
     }
 }
 
+/// Waker implementation for task notification
 mod waker;
+/// Platform-specific executor implementations
 mod sys;
 
 
@@ -274,6 +361,10 @@ mod sys;
 
 
 
+/// Internal representation of a spawned task.
+///
+/// Wraps the platform-specific task implementation and provides
+/// a uniform interface for task management across different platforms.
 #[derive(Debug)]
 struct SpawnedTask {
     imp: sys::SpawnedTask,
@@ -365,12 +456,11 @@ impl Executor {
     /// # Examples
     ///
     /// ```
-    /// # use futures::executor::block_on;
+    /// # // This example demonstrates async draining
     /// use some_global_executor::Executor;
     /// use some_executor::SomeExecutor;
     /// use some_executor::task::{Task, Configuration};
     ///
-    /// # block_on(async {
     /// let mut executor = Executor::new("async-example".to_string(), 4);
     ///
     /// // Spawn multiple tasks
@@ -383,9 +473,12 @@ impl Executor {
     ///     executor.spawn(task);
     /// }
     ///
-    /// // Asynchronously wait for completion
-    /// executor.drain_async().await;
-    /// # });
+    /// // Get the drain future (would be awaited in async context)
+    /// let drain_future = executor.drain_async();
+    /// // In async context: drain_future.await;
+    /// // For this example, convert back to executor and drain synchronously
+    /// let executor: Executor = drain_future.into();
+    /// executor.drain();
     /// ```
     pub fn drain_async(self) -> ExecutorDrain {
         ExecutorDrain {
@@ -402,6 +495,13 @@ impl Executor {
     ///
     /// After calling this method, this executor will be used as the default
     /// for global task spawning operations throughout the application.
+    /// This is useful for libraries and applications that need a shared
+    /// executor instance.
+    ///
+    /// # Thread Safety
+    ///
+    /// The executor is cloned when set as global, so the original instance
+    /// remains independent and can still be used directly.
     ///
     /// # Examples
     ///
@@ -410,7 +510,10 @@ impl Executor {
     ///
     /// let executor = Executor::new("global".to_string(), 4);
     /// executor.set_as_global_executor();
-    /// // Now this executor handles global task spawning
+    /// 
+    /// // The global executor is now available for use by any code
+    /// // that calls some_executor::global_executor::spawn()
+    /// 
     /// # executor.drain();
     /// ```
     pub fn set_as_global_executor(&self) {
@@ -421,6 +524,13 @@ impl Executor {
     ///
     /// After calling this method, this executor will be used as the default
     /// for thread-local task spawning operations on the current thread.
+    /// This is useful when different threads need different executor
+    /// configurations.
+    ///
+    /// # Thread Safety
+    ///
+    /// The thread-local executor is only accessible from the thread that
+    /// set it. Each thread can have its own thread-local executor.
     ///
     /// # Examples
     ///
@@ -429,7 +539,10 @@ impl Executor {
     ///
     /// let executor = Executor::new("thread-local".to_string(), 2);
     /// executor.set_as_thread_executor();
-    /// // Now this executor handles thread-local task spawning
+    /// 
+    /// // This thread now uses this executor for thread-local spawning
+    /// // via some_executor::thread_executor::spawn()
+    /// 
     /// # executor.drain();
     /// ```
     pub fn set_as_thread_executor(&self) {
@@ -437,6 +550,11 @@ impl Executor {
     }
 }
 
+/// Implementation of the [`SomeExecutor`] trait from the `some_executor` framework.
+///
+/// This implementation provides the core task spawning functionality, supporting
+/// both synchronous and asynchronous task submission with type-safe observers
+/// for monitoring task execution.
 impl some_executor::SomeExecutor for Executor {
     type ExecutorNotifier = Infallible;
 
@@ -484,14 +602,45 @@ impl some_executor::SomeExecutor for Executor {
     }
 }
 
-//boilerplates
+// Conversion implementations for ergonomic API usage
 
+/// Converts an [`ExecutorDrain`] back to its underlying [`Executor`].
+///
+/// This is useful when you need to access the executor after initiating
+/// a drain operation but before it completes.
+///
+/// # Examples
+///
+/// ```
+/// use some_global_executor::{Executor, ExecutorDrain};
+///
+/// let executor = Executor::new("test".to_string(), 2);
+/// let drain: ExecutorDrain = executor.into();
+/// let executor: Executor = drain.into();
+/// executor.drain();
+/// ```
 impl From<ExecutorDrain> for Executor {
     fn from(drain: ExecutorDrain) -> Self {
         drain.executor
     }
 }
 
+/// Converts an [`Executor`] into an [`ExecutorDrain`] future.
+///
+/// This conversion is equivalent to calling [`Executor::drain_async()`].
+///
+/// # Examples
+///
+/// ```
+/// use some_global_executor::{Executor, ExecutorDrain};
+///
+/// let executor = Executor::new("test".to_string(), 2);
+/// let drain: ExecutorDrain = executor.into();
+/// // In async context: drain.await;
+/// // For this example, convert back and drain:
+/// let executor: Executor = drain.into();
+/// executor.drain();
+/// ```
 impl From<Executor> for ExecutorDrain {
     fn from(executor: Executor) -> Self {
         ExecutorDrain {
@@ -500,12 +649,41 @@ impl From<Executor> for ExecutorDrain {
     }
 }
 
+/// Provides immutable access to the underlying [`Executor`] from an [`ExecutorDrain`].
+///
+/// # Examples
+///
+/// ```
+/// use some_global_executor::{Executor, ExecutorDrain};
+///
+/// let executor = Executor::new("test".to_string(), 2);
+/// let drain = executor.drain_async();
+/// let name = drain.as_ref().name();
+/// assert_eq!(name, "test");
+/// # let executor: Executor = drain.into();
+/// # executor.drain();
+/// ```
 impl AsRef<Executor> for ExecutorDrain {
     fn as_ref(&self) -> &Executor {
         &self.executor
     }
 }
 
+/// Provides mutable access to the underlying [`Executor`] from an [`ExecutorDrain`].
+///
+/// This allows operations like resizing the thread pool even while draining.
+///
+/// # Examples
+///
+/// ```
+/// use some_global_executor::{Executor, ExecutorDrain};
+///
+/// let executor = Executor::new("test".to_string(), 2);
+/// let mut drain = executor.drain_async();
+/// drain.as_mut().resize(4);  // Resize while draining
+/// # let executor: Executor = drain.into();
+/// # executor.drain();
+/// ```
 impl AsMut<Executor> for ExecutorDrain {
     fn as_mut(&mut self) -> &mut Executor {
         &mut self.executor

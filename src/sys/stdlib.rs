@@ -249,7 +249,7 @@ impl Executor {
     }
     pub fn spawn_internal(&self, spawned_task: crate::SpawnedTask) {
         self.drain_notify().running_tasks.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-        logwise::warn_sync!("Sending task {task}",task=logwise::privacy::LogIt(spawned_task.imp.task_id()));
+        logwise::debuginternal_sync!("Sending task {task}",task=logwise::privacy::LogIt(spawned_task.imp.task_id()));
         self.inner.threadpool.task_sender.send(spawned_task).unwrap();
     }
     pub fn resize(&mut self, size: usize) {
