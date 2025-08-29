@@ -306,7 +306,7 @@ pub fn default_threadpool_size() -> usize {
         window.navigator().hardware_concurrency() as usize
     } else {
         let global = js_sys::global();
-        if let Some(worker) = global.dyn_into::<web_sys::WorkerGlobalScope>().ok() {
+        if let Ok(worker) = global.dyn_into::<web_sys::WorkerGlobalScope>() {
             worker.navigator().hardware_concurrency() as usize
         } else {
             todo!("Not implemented");

@@ -100,11 +100,9 @@ we'll rewrite wasm_thread to support async thread entrypoints:
 At this point I've lost enough time on this bug to actually consider implementing it myself,
 but I'm not sure they have the review bandwidth to look at it, and this is simpler.
 */
-
 fn patch_if_needed(close_info: &Rc<RefCell<CloseInfo>>) {
     if close_info.borrow().installed_close_handler.is_some() {
         // Already patched, do nothing
-        return;
     } else {
         let global = js_sys::global();
 
@@ -120,7 +118,7 @@ fn patch_if_needed(close_info: &Rc<RefCell<CloseInfo>>) {
             //move our close_info into the closure itself.
             let mut borrow_mut = move_close_info.borrow_mut();
             borrow_mut.close_is_called = true;
-            consider_closing(&mut *borrow_mut)
+            consider_closing(&mut borrow_mut)
         }) as Box<dyn Fn()>);
 
         // 4. Replace `self.close` with our wrapper
@@ -144,7 +142,7 @@ fn consider_closing(info: &mut CloseInfo) {
         return;
     }
     // If no tasks are running, we can safely call the original close
-    if let Some(orig_close) = info.installed_close_handler.as_mut().take() {
+    if let Some(orig_close) = info.installed_close_handler.take() {
         orig_close
             .call0(&js_sys::global())
             .expect("Failed to call original close");
@@ -214,17 +212,16 @@ impl SomeStaticExecutor for StaticExecutor {
         observer
     }
 
-    fn spawn_static_async<F, Notifier: ObserverNotified<F::Output>>(
+    async fn spawn_static_async<F, Notifier: ObserverNotified<F::Output>>(
         &mut self,
         task: Task<F, Notifier>,
-    ) -> impl Future<Output = impl Observer<Value = F::Output>>
+    ) -> impl Observer<Value = F::Output>
     where
         Self: Sized,
         F: Future + 'static,
         F::Output: 'static + Unpin,
     {
-        #[allow(clippy::async_yields_async)]
-        async move { self.spawn_static(task) }
+        self.spawn_static(task)
     }
 
     fn spawn_static_objsafe(&mut self, task: ObjSafeStaticTask) -> BoxedStaticObserver {
@@ -237,8 +234,7 @@ impl SomeStaticExecutor for StaticExecutor {
     ) -> BoxedStaticObserverFuture<'s> {
         #[allow(clippy::async_yields_async)]
         Box::new(async {
-            let o = self.spawn_static_objsafe(task);
-            o
+            self.spawn_static_objsafe(task)
         })
     }
 
