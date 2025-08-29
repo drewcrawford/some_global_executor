@@ -2,6 +2,16 @@
 name = "some_global_executor"
 version = "0.1.0"
 edition = "2024"
+authors = ["Drew Crawford <drew@sealedabstract.com>"]
+description = "Reference thread-per-core executor for the some_executor crate."
+homepage = "https://sealedabstract.com/code/some_global_executor"
+repository = "https://github.com/drewcrawford/some_global_executor"
+license = "MIT OR Apache-2.0"
+keywords = ["async", "executor", "non-blocking", "futures"]
+categories = ["asynchronous", "concurrency","wasm"]
+exclude = [".*"]
+rust-version = "1.88.0"
+
 
 [dependencies]
 logwise = "0.3.0"
