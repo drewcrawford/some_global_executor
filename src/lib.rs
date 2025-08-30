@@ -813,6 +813,7 @@ mod tests {
                     if tries > 10000 {
                         panic!("too many tries");
                     }
+                    #[cfg(not(target_arch = "wasm32"))]
                     thread::yield_now();
                 }
             }
