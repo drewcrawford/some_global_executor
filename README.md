@@ -1,5 +1,7 @@
 # some_global_executor
 
+![logo](art/logo.png)
+
 Cross-platform global executor implementation for the `some_executor` framework.
 
 This crate provides a thread pool-based executor that works seamlessly on both standard platforms and WebAssembly (WASM) targets. It implements the `SomeExecutor` trait from the `some_executor` framework and provides efficient task scheduling with configurable parallelism.
@@ -179,4 +181,4 @@ The project uses several local dependencies that may be patched in `Cargo.toml`:
 
 ## License
 
-[License information would typically go here]
+MIT or Apache-2.0, at your option.

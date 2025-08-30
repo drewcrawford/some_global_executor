@@ -1,5 +1,7 @@
 //! Cross-platform global executor implementation for the `some_executor` framework.
 //!
+//! ![logo](../../../art/logo.png)
+//!
 //! This crate provides a thread pool-based executor that works seamlessly on both standard
 //! platforms and WebAssembly (WASM) targets. It implements the [`SomeExecutor`] trait from
 //! the `some_executor` framework and provides efficient task scheduling with configurable
