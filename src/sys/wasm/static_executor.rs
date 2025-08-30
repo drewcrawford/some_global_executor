@@ -234,9 +234,7 @@ impl SomeStaticExecutor for StaticExecutor {
         task: ObjSafeStaticTask,
     ) -> BoxedStaticObserverFuture<'s> {
         #[allow(clippy::async_yields_async)]
-        Box::new(async {
-            self.spawn_static_objsafe(task)
-        })
+        Box::new(async { self.spawn_static_objsafe(task) })
     }
 
     fn clone_box(&self) -> Box<DynStaticExecutor> {
