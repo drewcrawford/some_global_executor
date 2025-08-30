@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::DrainNotify;
 use crate::sys::wasm::static_executor::StaticExecutor;
 use channel::{Receiver, Sender};

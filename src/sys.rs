@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #[cfg(not(target_arch = "wasm32"))]
 mod stdlib;
 #[cfg(not(target_arch = "wasm32"))]

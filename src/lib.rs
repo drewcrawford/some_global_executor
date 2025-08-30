@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Cross-platform global executor implementation for the `some_executor` framework.
 //!
 //! ![logo](../../../art/logo.png)

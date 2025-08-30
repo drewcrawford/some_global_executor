@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use std::mem::forget;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;

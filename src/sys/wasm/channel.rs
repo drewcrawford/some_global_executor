@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 /*!
 This is a custom channel type.  We currently use this only on wasm, but there's no reason it coudln't
 be extracted to a more general crate.
