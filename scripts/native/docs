@@ -8,7 +8,3 @@ if [[ " $* " =~ " --relaxed " ]]; then
     WARN_FLAGS=""
 fi
 RUSTDOCFLAGS="$WARN_FLAGS" cargo doc
-
-# Run proc crate docs
-cd "$REPO_ROOT/test_executors_proc"
-"$REPO_ROOT/test_executors_proc/scripts/native/docs" "$@"
