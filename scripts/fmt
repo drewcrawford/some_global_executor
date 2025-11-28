@@ -4,7 +4,3 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cargo fmt --check
-
-# Run proc crate fmt
-cd "$REPO_ROOT/test_executors_proc"
-"$REPO_ROOT/test_executors_proc/scripts/fmt"

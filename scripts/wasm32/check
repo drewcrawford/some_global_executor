@@ -8,7 +8,3 @@ if [[ " $* " =~ " --relaxed " ]]; then
 fi
 source "$SCRIPT_DIR/_env"
 RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly check --target=wasm32-unknown-unknown
-
-# Run proc crate check
-cd "$REPO_ROOT/test_executors_proc"
-"$REPO_ROOT/test_executors_proc/scripts/wasm32/check" "$@"

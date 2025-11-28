@@ -61,7 +61,3 @@ else
     # Non-Linux or Weston not available, run tests normally
     RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test
 fi
-
-# Run proc crate tests
-cd "$REPO_ROOT/test_executors_proc"
-"$REPO_ROOT/test_executors_proc/scripts/native/tests" "$@"

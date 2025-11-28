@@ -175,11 +175,11 @@ impl SpawnedStaticTask {
 // Thread-local storage for static tasks
 thread_local! {
     /// Queue of ready-to-run static tasks
-    static STATIC_TASKS: RefCell<VecDeque<SpawnedStaticTask>> = RefCell::new(VecDeque::new());
+    static STATIC_TASKS: RefCell<VecDeque<SpawnedStaticTask>> = const { RefCell::new(VecDeque::new())} ;
     /// Sender to notify the thread of new tasks
-    static STATIC_NOTIFY_SENDER: RefCell<Option<Sender<u64>>> = RefCell::new(None);
+    static STATIC_NOTIFY_SENDER: RefCell<Option<Sender<u64>>> = const {RefCell::new(None) };
     /// Reference to the drain notify for task completion
-    static STATIC_DRAIN_NOTIFY: RefCell<Option<Arc<DrainNotify>>> = RefCell::new(None);
+    static STATIC_DRAIN_NOTIFY: RefCell<Option<Arc<DrainNotify>>> = const { RefCell::new(None) };
     /// Map of pending (awaiting wake) static tasks, indexed by task ID
     static STATIC_PENDING_TASKS: RefCell<std::collections::HashMap<u64, SpawnedStaticTask>> = RefCell::new(std::collections::HashMap::new());
     /// Counter for generating unique task IDs (starts at 1, since 0 is the "new task" indicator)
