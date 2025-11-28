@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+WARN_FLAGS="-D warnings"
+if [[ " $* " =~ " --relaxed " ]]; then
+    WARN_FLAGS=""
+fi
+RUSTFLAGS="$WARN_FLAGS" cargo check
+
+# Run proc crate check
+cd "$REPO_ROOT/test_executors_proc"
+"$REPO_ROOT/test_executors_proc/scripts/native/check" "$@"

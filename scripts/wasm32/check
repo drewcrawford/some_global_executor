@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+if [[ " $* " =~ " --relaxed " ]]; then
+    export RELAXED_WARNINGS=1
+fi
+source "$SCRIPT_DIR/_env"
+RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly check --target=wasm32-unknown-unknown
+
+# Run proc crate check
+cd "$REPO_ROOT/test_executors_proc"
+"$REPO_ROOT/test_executors_proc/scripts/wasm32/check" "$@"
