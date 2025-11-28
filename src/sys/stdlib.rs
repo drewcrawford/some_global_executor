@@ -457,6 +457,7 @@ impl Threadpool {
                     None,
                     "some_global_executor threadpool".to_string(),
                     logwise::Level::DebugInternal,
+                    logwise::log_enabled!(logwise::Level::DebugInternal),
                 );
                 c.set_current();
                 thread.run();
