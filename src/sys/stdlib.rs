@@ -6,7 +6,10 @@ use logwise::info_sync;
 use some_executor::observer::{Observer, ObserverNotified};
 use some_executor::static_support::OwnedSomeStaticExecutorErasingNotifier;
 use some_executor::task::{DynSpawnedTask, Task};
-use some_executor::{BoxedStaticObserver, BoxedStaticObserverFuture, DynStaticExecutor, ObjSafeStaticTask, Priority, SomeStaticExecutor};
+use some_executor::{
+    BoxedStaticObserver, BoxedStaticObserverFuture, DynStaticExecutor, ObjSafeStaticTask, Priority,
+    SomeStaticExecutor,
+};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::convert::Infallible;
@@ -91,7 +94,6 @@ struct SpawnedStaticTask {
     wake_internal: Arc<WakeInternal>,
     drain_notify: Arc<DrainNotify>,
     pub(crate) priority: some_executor::Priority,
-
 }
 
 impl std::fmt::Debug for SpawnedStaticTask {
@@ -121,8 +123,7 @@ impl SpawnedStaticTask {
             waker,
             wake_internal,
             drain_notify,
-            priority
-
+            priority,
         }
     }
 
@@ -152,9 +153,7 @@ impl SpawnedStaticTask {
                 let move_wake_internal = self.wake_internal.clone();
 
                 // Capture the sender before storing task (must be done on this thread)
-                let sender = STATIC_NOTIFY_SENDER.with(|sender| {
-                    sender.borrow().clone()
-                });
+                let sender = STATIC_NOTIFY_SENDER.with(|sender| sender.borrow().clone());
 
                 // Store in pending tasks map
                 STATIC_PENDING_TASKS.with(|pending| {
@@ -249,9 +248,12 @@ impl SomeStaticExecutor for StaticExecutor {
         let priority = task.priority();
         let (spawned, observer) = task.spawn_static(self);
         // Convert to future and spawn it
-        self.spawn(async {
-            spawned.into_future().await;
-        }, priority);
+        self.spawn(
+            async {
+                spawned.into_future().await;
+            },
+            priority,
+        );
         observer
     }
 
@@ -337,7 +339,9 @@ impl Thread {
         let static_executor = StaticExecutor::new(self.drain_notify.clone());
         let boxed_executor: Box<dyn SomeStaticExecutor<ExecutorNotifier = Infallible>> =
             Box::new(static_executor);
-        some_executor::thread_executor::set_thread_static_executor_adapting_notifier(boxed_executor);
+        some_executor::thread_executor::set_thread_static_executor_adapting_notifier(
+            boxed_executor,
+        );
 
         loop {
             select_biased!(
