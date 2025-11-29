@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 keywords = ["async", "executor", "non-blocking", "futures"]
 categories = ["asynchronous", "concurrency","wasm"]
 exclude = [".*"]
-rust-version = "1.88.0"
+rust-version = "1.85.1"
 
 
 [dependencies]
