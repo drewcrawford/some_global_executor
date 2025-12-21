@@ -14,7 +14,7 @@ rust-version = "1.85.1"
 
 
 [dependencies]
-logwise = "0.4.0"
+logwise = "0.5.0"
 some_executor = "0.6.1"
 atomic-waker = "1.1.2"
 
@@ -24,7 +24,7 @@ logwise_internal = []
 
 
 [dev-dependencies]
-test_executors = "0.4.0"
+test_executors = "0.4.1"
 continue = "0.1.1"
 portable_async_sleep = "0.1.1"
 num_cpus = "1.17.0"
