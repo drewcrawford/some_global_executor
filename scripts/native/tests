@@ -1,11 +1,16 @@
 #!/bin/bash
 set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
 WARN_FLAGS="-D warnings"
 if [[ " $* " =~ " --relaxed " ]]; then
     WARN_FLAGS=""
+fi
+
+# Install mesa-utils if on Linux with apt-get available and not already installed
+if [[ "$OSTYPE" == "linux-gnu"* ]] && command -v apt-get &> /dev/null; then
+    if ! command -v glxinfo &> /dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y mesa-utils
+    fi
 fi
 
 # Check if we're on Linux and Weston is available
@@ -53,11 +58,11 @@ if [[ "$OSTYPE" == "linux-gnu"* ]] && command -v weston &> /dev/null; then
     grep -E "ERROR|warn|headless|listening" -i /tmp/weston.log || true
 
     # Run tests
-    RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test
+    RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test --all
 
     # Cleanup
     kill $WESTON_PID || true
 else
     # Non-Linux or Weston not available, run tests normally
-    RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test
+    MACOSX_DEPLOYMENT_TARGET=15 RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test --all
 fi

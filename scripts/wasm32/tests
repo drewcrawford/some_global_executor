@@ -1,11 +1,21 @@
 #!/bin/bash
 set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-if [[ " $* " =~ " --relaxed " ]]; then
-    export RELAXED_WARNINGS=1
-fi
-source "$SCRIPT_DIR/_env"
-CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="wasm-bindgen-test-runner" RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo +nightly test --target=wasm32-unknown-unknown
+args=()
+for arg in "$@"; do
+    if [[ "$arg" == "--relaxed" ]]; then
+        export RELAXED_WARNINGS=1
+    else
+        args+=("$arg")
+    fi
+done
 
+source "$(dirname "$0")/_env"
+
+# Firefox headless doesn't support WebGPU by default, causing tests to fail with:
+#   Can't request adapter: NotFound { active_backends: Backends(BROWSER_WEBGPU),
+#   requested_backends: Backends(NOOP | VULKAN | GL | METAL | DX12), ... }
+# Use Chrome which has WebGPU support
+export CHROMEDRIVER=$(which chromedriver)
+
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="wasm-bindgen-test-runner" RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo +nightly test --target=wasm32-unknown-unknown --all "${args[@]}"
