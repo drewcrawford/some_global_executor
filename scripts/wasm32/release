@@ -1,0 +1,36 @@
+#!/bin/bash
+# WASM32 release build script
+set -e
+
+source "$(dirname "$0")/_env"
+
+echo "=== Building wasm32 release ==="
+echo "RUSTFLAGS: $WASM32_RUSTFLAGS"
+RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly build \
+    --target wasm32-unknown-unknown \
+    --profile wasm_release
+
+echo "=== Generating license info ==="
+cargo +nightly about generate -o about.txt licenses.hbs --target wasm32-unknown-unknown
+
+echo "=== Packaging web build ==="
+# Copy assets to web directory
+rm -rf web/assets
+cp -R assets web/
+
+# Run wasm-bindgen to generate JS bindings
+echo "=== Running wasm-bindgen ==="
+wasm-bindgen \
+    --out-dir web/build \
+    --target web \
+    target/wasm32-unknown-unknown/wasm_release/Vectropolis.wasm
+
+# Copy license info
+cp about.txt web/
+
+echo "=== Cleanup ==="
+rm -f about.txt
+
+echo "=== Done ==="
+echo "Web build ready in: web/"
+ls -la web/

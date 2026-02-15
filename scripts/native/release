@@ -1,0 +1,185 @@
+#!/bin/bash
+# Native release build script
+# Supports macOS, Linux, and Windows (via Git Bash/MSYS2)
+set -e
+
+OS_RAW="$(uname -s)"
+ARCH="$(uname -m)"
+
+# Normalize OS name (Git Bash reports MINGW64_NT-*, MSYS_NT-*, etc.)
+case "$OS_RAW" in
+    MINGW*|MSYS*|CYGWIN*)
+        OS="Windows"
+        ;;
+    *)
+        OS="$OS_RAW"
+        ;;
+esac
+
+# Optional target override (e.g., aarch64-unknown-linux-gnu)
+TARGET="${TARGET:-}"
+
+echo "=== Detected OS: $OS, Arch: $ARCH ==="
+
+# Build arguments
+BUILD_ARGS="--release"
+if [ -n "$TARGET" ]; then
+    BUILD_ARGS="$BUILD_ARGS --target $TARGET"
+fi
+
+# Cross-compilation setup for aarch64 Linux
+if [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
+    echo "=== Configuring cross-compilation for aarch64 ==="
+    # Clear PATH-based fallbacks so we don't pick up host x86_64 .pc files
+    export PKG_CONFIG_PATH=""
+    export PKG_CONFIG=pkg-config
+    # Allow pkg-config to work in cross-compilation mode
+    export PKG_CONFIG_ALLOW_CROSS=1
+fi
+
+echo "=== Building release ==="
+echo "cargo build $BUILD_ARGS"
+cargo build $BUILD_ARGS
+
+echo "=== Generating license info ==="
+if [ -n "$TARGET" ]; then
+    cargo about generate -o about.txt licenses.hbs --target "$TARGET"
+else
+    cargo about generate -o about.txt licenses.hbs
+fi
+
+if [ "$OS" = "Darwin" ]; then
+    # macOS release
+    APPLE_ID="${APPLE_ID:-drew+buildservers@sealedabstract.com}"
+    TEAM_ID="${TEAM_ID:-P5GM95Q9VV}"
+    SIGNING_IDENTITY="${SIGNING_IDENTITY:-Developer ID Application: DrewCrawfordApps LLC (P5GM95Q9VV)}"
+
+    SKIP_NOTARIZATION=false
+    if [ -z "$APPLE_NOTARY_PASSWORD" ]; then
+        echo "Warning: APPLE_NOTARY_PASSWORD not set, skipping notarization"
+        echo "You can create an app-specific password at https://appleid.apple.com/account/manage"
+        SKIP_NOTARIZATION=true
+    fi
+
+    echo "=== Packaging macOS app bundle ==="
+    cp target/release/Vectropolis macos/Vectropolis.app/Contents/MacOS/Vectropolis
+    rm -rf macos/Vectropolis.app/Contents/Resources/assets
+    cp -R assets macos/Vectropolis.app/Contents/Resources/
+
+    echo "=== Code signing ==="
+    codesign -vvv --deep --force --options runtime \
+        --entitlements macos/Vectropolis.entitlements \
+        --sign "$SIGNING_IDENTITY" \
+        macos/Vectropolis.app
+
+    if [ "$SKIP_NOTARIZATION" = false ]; then
+        echo "=== Creating zip for notarization ==="
+        rm -f Vectropolis.app.zip
+        ditto -c -k --keepParent macos/Vectropolis.app Vectropolis.app.zip
+
+        echo "=== Submitting for notarization ==="
+        xcrun notarytool submit Vectropolis.app.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$APPLE_NOTARY_PASSWORD" \
+            --wait | tee notary-output.txt || true
+
+        echo "=== Checking notarization output ==="
+        cat notary-output.txt
+        notary_job_id=$(grep '^  id:' notary-output.txt | head -1 | awk '{print $2}')
+        if [ -n "$notary_job_id" ]; then
+            echo "=== Fetching notarization log ==="
+            xcrun notarytool log "$notary_job_id" \
+                --apple-id "$APPLE_ID" \
+                --team-id "$TEAM_ID" \
+                --password "$APPLE_NOTARY_PASSWORD" || true
+        fi
+
+        echo "=== Stapling notarization ==="
+        xcrun stapler staple macos/Vectropolis.app
+    else
+        echo "=== Skipping notarization ==="
+    fi
+
+    echo "=== Creating final package ==="
+    rm -rf macos-package
+    mkdir -p macos-package
+    cp -R macos/Vectropolis.app macos-package/Vectropolis.app
+    cp about.txt macos-package/
+
+    echo "=== Creating final zip ==="
+    rm -f Vectropolis-macos-arm64.zip
+    ditto -c -k macos-package Vectropolis-macos-arm64.zip
+
+    echo "=== Cleanup ==="
+    rm -f Vectropolis.app.zip notary-output.txt about.txt
+    rm -rf macos-package
+
+    echo "=== Done ==="
+    echo "Release package: Vectropolis-macos-arm64.zip"
+    ls -lh Vectropolis-macos-arm64.zip
+
+elif [ "$OS" = "Linux" ]; then
+    # Linux release
+    # Determine output directory and package name based on target
+    if [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
+        BINARY_PATH="target/aarch64-unknown-linux-gnu/release/Vectropolis"
+        PACKAGE_NAME="Vectropolis-linux-arm64.tar.xz"
+        CAN_STRIP=false  # Cross-compiled, can't strip without target toolchain
+    else
+        BINARY_PATH="target/release/Vectropolis"
+        PACKAGE_NAME="Vectropolis-linux-x64.tar.xz"
+        CAN_STRIP=true
+    fi
+
+    echo "=== Packaging Linux binary ==="
+    cp "$BINARY_PATH" Vectropolis
+    chmod +x Vectropolis
+
+    if [ "$CAN_STRIP" = true ]; then
+        echo "=== Stripping binary ==="
+        strip --strip-all Vectropolis
+    fi
+
+    echo "=== Creating final package ==="
+    tar -cJf "$PACKAGE_NAME" Vectropolis assets about.txt
+
+    echo "=== Cleanup ==="
+    rm -f Vectropolis about.txt
+
+    echo "=== Done ==="
+    echo "Release package: $PACKAGE_NAME"
+    ls -lh "$PACKAGE_NAME"
+
+elif [ "$OS" = "Windows" ]; then
+    # Windows release
+    # Determine paths and package name based on target
+    if [ "$TARGET" = "aarch64-pc-windows-msvc" ]; then
+        BINARY_PATH="target/aarch64-pc-windows-msvc/release/Vectropolis.exe"
+        PDB_PATH="target/aarch64-pc-windows-msvc/release/Vectropolis.pdb"
+        PACKAGE_NAME="Vectropolis-windows-arm64.zip"
+    else
+        BINARY_PATH="target/release/Vectropolis.exe"
+        PDB_PATH="target/release/Vectropolis.pdb"
+        PACKAGE_NAME="Vectropolis-windows-x64.zip"
+    fi
+
+    echo "=== Packaging Windows binary ==="
+    cp "$BINARY_PATH" Vectropolis.exe
+
+    echo "=== Creating final package ==="
+    rm -f "$PACKAGE_NAME"
+    powershell.exe -Command "Compress-Archive -Path Vectropolis.exe,assets,about.txt -DestinationPath $PACKAGE_NAME -CompressionLevel Optimal"
+
+    echo "=== Cleanup ==="
+    rm -f Vectropolis.exe about.txt
+
+    echo "=== Done ==="
+    echo "Release package: $PACKAGE_NAME"
+    echo "Debug symbols: $PDB_PATH"
+    ls -lh "$PACKAGE_NAME"
+
+else
+    echo "Error: Unsupported OS: $OS"
+    exit 1
+fi

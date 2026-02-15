@@ -1,0 +1,3 @@
+#!/bin/bash
+set -e
+MACOSX_DEPLOYMENT_TARGET=15 cargo run "$@"

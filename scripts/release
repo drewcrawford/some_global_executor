@@ -1,0 +1,5 @@
+#!/bin/bash
+set -e
+scripts/native/release "$@"
+# Uncomment to also build wasm32:
+# scripts/wasm32/release "$@"
