@@ -10,7 +10,6 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::task::{Context, RawWaker, RawWakerVTable, Waker};
-use wasm_bindgen::JsCast;
 
 pub mod channel;
 mod static_executor;
@@ -273,9 +272,10 @@ impl Executor {
         thread_sender: channel::Sender<TaskMessage>,
     ) {
         let pending_tasks = Arc::downgrade(pending_tasks);
-        wasm_thread::Builder::new()
+        wasm_safe_thread::Builder::new()
             .name("some_global_executor_{}".to_string() + &t.to_string())
             .spawn(move || {
+                wasm_safe_thread::redirect_println_eprintln_to_console_current_thread();
                 let t = Thread {
                     static_executor: StaticExecutor::new(),
                     drain_notify,
@@ -303,14 +303,7 @@ impl SpawnedTask {
 }
 
 pub fn default_threadpool_size() -> usize {
-    if let Some(window) = web_sys::window() {
-        window.navigator().hardware_concurrency() as usize
-    } else {
-        let global = js_sys::global();
-        if let Ok(worker) = global.dyn_into::<web_sys::WorkerGlobalScope>() {
-            worker.navigator().hardware_concurrency() as usize
-        } else {
-            todo!("Not implemented");
-        }
-    }
+    wasm_safe_thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
 }

@@ -14,7 +14,7 @@ It provides
 
 use std::sync::Arc;
 use std::sync::Weak;
-use wasm_safe_mutex::Mutex;
+use wasm_safe_thread::Mutex;
 
 #[derive(Debug)]
 struct SharedLocked<T> {

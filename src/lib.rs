@@ -36,6 +36,7 @@
 //! use some_global_executor::Executor;
 //! use some_executor::SomeExecutor;
 //! use some_executor::task::{Task, Configuration};
+//! # if cfg!(target_arch = "wasm32") { return; }
 //!
 //! // Create an executor with 4 worker threads
 //! let mut executor = Executor::new("my-executor".to_string(), 4);
@@ -67,6 +68,7 @@
 //! use some_executor::SomeExecutor;
 //! use some_executor::task::{Task, Configuration};
 //! use some_executor::observer::{Observer, Observation};
+//! # if cfg!(target_arch = "wasm32") { return; }
 //!
 //! let mut executor = Executor::new("observer-example".to_string(), 2);
 //!
@@ -102,6 +104,7 @@
 //!
 //! ```
 //! use some_global_executor::Executor;
+//! # if cfg!(target_arch = "wasm32") { return; }
 //!
 //! // Create and configure the global executor
 //! let executor = Executor::new("global".to_string(), num_cpus::get());
@@ -297,6 +300,7 @@ impl Executor {
 /// use some_global_executor::Executor;
 /// use some_executor::SomeExecutor;
 /// use some_executor::task::{Task, Configuration};
+/// # if cfg!(target_arch = "wasm32") { return; }
 ///
 /// let mut executor = Executor::new("async-drain".to_string(), 2);
 ///
@@ -424,6 +428,7 @@ impl Executor {
     /// use some_global_executor::Executor;
     /// use some_executor::SomeExecutor;
     /// use some_executor::task::{Task, Configuration};
+    /// # if cfg!(target_arch = "wasm32") { return; }
     ///
     /// let mut executor = Executor::new("sync-drain".to_string(), 2);
     ///
@@ -466,6 +471,7 @@ impl Executor {
     /// use some_global_executor::Executor;
     /// use some_executor::SomeExecutor;
     /// use some_executor::task::{Task, Configuration};
+    /// # if cfg!(target_arch = "wasm32") { return; }
     ///
     /// let mut executor = Executor::new("async-example".to_string(), 4);
     ///
@@ -735,7 +741,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     use std::thread;
     #[cfg(target_arch = "wasm32")]
-    use wasm_thread as thread;
+    use wasm_safe_thread as thread;
 
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
