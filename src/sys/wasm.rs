@@ -23,6 +23,16 @@ struct Internal {
     size: Mutex<usize>,
 }
 
+impl Drop for Internal {
+    fn drop(&mut self) {
+        // Ensure worker loops exit when the last executor reference is dropped.
+        let size = *self.size.lock().unwrap();
+        for _ in 0..size {
+            self.thread_sender.send(TaskMessage::Shutdown);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Executor {
     internal: Arc<Internal>,
